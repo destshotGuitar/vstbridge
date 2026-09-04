@@ -17,6 +17,7 @@
 #include "utils.h"
 
 #include <stdlib.h>
+#include <algorithm>
 
 #ifdef VSTBRIDGE_PE_HOST
 #include "../wine-host/unixlib/pe.h"
@@ -47,6 +48,19 @@ constexpr char disable_watchdog_timer_env_var[] = "VSTBRIDGE_NO_WATCHDOG";
  * is only relevant when using some namespacing setup for sandboxing.
  */
 constexpr char temp_dir_override_env_var[] = "VSTBRIDGE_TEMP_DIR";
+
+/**
+ * If this environment variable is set to a number, then we'll use that as the
+ * initial `SCHED_FIFO` priority for our realtime threads instead of the
+ * default of 5. See `fallback_realtime_priority()`.
+ */
+constexpr char fallback_rt_priority_env_var[] = "YABRIDGE_FALLBACK_RT_PRIORITY";
+
+/**
+ * The initial `SCHED_FIFO` priority used when
+ * `fallback_rt_priority_env_var` is unset or doesn't contain a number.
+ */
+constexpr int default_fallback_rt_priority = 5;
 
 fs::path get_temporary_directory() {
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
@@ -94,6 +108,48 @@ std::optional<int> get_realtime_priority() noexcept {
     } else {
         return std::nullopt;
     }
+}
+
+int fallback_realtime_priority() noexcept {
+    // The environment doesn't get modified anywhere, so we can parse this once
+    // and keep using the result. This is important because this function is
+    // also called from realtime threads.
+    static const int priority = []() -> int {
+        // This is safe because we're not storing the pointer anywhere and the
+        // environment doesn't get modified anywhere
+        // NOLINTNEXTLINE(concurrency-mt-unsafe)
+        const char* env_value = getenv(fallback_rt_priority_env_var);
+        if (!env_value || *env_value == '\0') {
+            return default_fallback_rt_priority;
+        }
+
+        // `strtol()` is used instead of `std::stoi()` because this function is
+        // `noexcept`. Anything that isn't a plain number is ignored.
+        char* parse_end = nullptr;
+        const long parsed_priority = strtol(env_value, &parse_end, 10);
+        if (*parse_end != '\0') {
+            return default_fallback_rt_priority;
+        }
+
+        // Clamping means a nonsensical value can't cause
+        // `sched_setscheduler()` to fail outright, leaving the thread on
+        // `SCHED_OTHER`. `RLIMIT_RTPRIO` is taken into account as well since
+        // that's usually lower than the scheduler's own maximum.
+        long max_priority = sched_get_priority_max(SCHED_FIFO);
+        rlimit rtprio_limit{};
+        if (getrlimit(RLIMIT_RTPRIO, &rtprio_limit) == 0 &&
+            rtprio_limit.rlim_cur != RLIM_INFINITY &&
+            static_cast<long>(rtprio_limit.rlim_cur) < max_priority) {
+            max_priority = static_cast<long>(rtprio_limit.rlim_cur);
+        }
+
+        return static_cast<int>(
+            std::clamp(parsed_priority,
+                       static_cast<long>(sched_get_priority_min(SCHED_FIFO)),
+                       max_priority));
+    }();
+
+    return priority;
 }
 
 bool set_realtime_priority(bool sched_fifo, int priority) noexcept {
