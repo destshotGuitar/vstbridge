@@ -202,15 +202,23 @@ Vst3PlugViewProxyImpl::Vst3PlugViewProxyImpl(
 Vst3PlugViewProxyImpl::~Vst3PlugViewProxyImpl() noexcept {
     // Also drop the plug view smart pointer on the Wine side when this gets
     // dropped
-    // NOTE: This can actually throw (e.g. out of memory or the socket got
-    //       closed). But if that were to happen, then we wouldn't be able to
-    //       recover from it anyways.
+    // NOTE: This can throw -- typically because the socket is closed, when the
+    //       Wine host has already exited. This destructor is `noexcept`, so an
+    //       escaping exception would call `std::terminate()` and take the host
+    //       application down with it. An editor destroyed after its Wine host
+    //       has gone is ordinary in a host that unloads modules once nothing
+    //       uses them.
+    //
     // NOTE: This also runs pending run loop tasks while we wait, which other
     //       editors hosted by the same Wine process may be blocked on. Hosts
     //       normally call `setFrame(nullptr)` before dropping the view, and
     //       that already removed this view's own task queue.
-    bridge_.send_mutually_recursive_message(
-        Vst3PlugViewProxy::Destruct{.owner_instance_id = owner_instance_id()});
+    try {
+        bridge_.send_mutually_recursive_message(
+            Vst3PlugViewProxy::Destruct{.owner_instance_id = owner_instance_id()});
+    } catch (const std::exception&) {
+        // The Wine host is gone; the view it owned went with it.
+    }
 }
 
 tresult PLUGIN_API
