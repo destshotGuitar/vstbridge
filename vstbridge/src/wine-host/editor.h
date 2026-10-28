@@ -442,8 +442,31 @@ class Editor {
     Size wrapper_window_size_;
 
     /**
+     * The atom corresponding to `WM_STATE`.
+     */
+    xcb_atom_t xcb_wm_state_property_;
+
+    /**
+     * The window handle of the editor window created by the DAW.
+     */
+    const xcb_window_t parent_window_;
+    /**
+     * A window that sits between `parent_window_` and `wine_window_`. The
+     * entire purpose of this is to prevent the host from responding to the
+     * `ConfigureNotify` events we send to `wine_window_` when the host
+     * subscribes to `SubStructureNotify` events on `parent_window_`.
+     */
+    X11Window wrapper_window_;
+
+    /**
      * The handle for the window created through Wine that the plugin uses to
      * embed itself in.
+     *
+     * NOTE: This is intentionally declared after `wrapper_window_` (and thus
+     *       destroyed before it): the destructor reparents the Wine window back
+     *       to the root window, and that has to happen before the wrapper is
+     *       destroyed, or Wine would handle property notifications for a dead
+     *       window and exit with `BadWindow`, taking the DAW down with it.
      */
     DeferredWin32Window win32_window_;
 
@@ -467,22 +490,6 @@ class Editor {
      */
     fu2::unique_function<void()> idle_timer_proc_;
 
-    /**
-     * The atom corresponding to `WM_STATE`.
-     */
-    xcb_atom_t xcb_wm_state_property_;
-
-    /**
-     * The window handle of the editor window created by the DAW.
-     */
-    const xcb_window_t parent_window_;
-    /**
-     * A window that sits between `parent_window_` and `wine_window_`. The
-     * entire purpose of this is to prevent the host from responding to the
-     * `ConfigureNotify` events we send to `wine_window_` when the host
-     * subscribes to `SubStructureNotify` events on `parent_window_`.
-     */
-    X11Window wrapper_window_;
     /**
      * The X11 window handle of the window belonging to `win32_window_`.
      */

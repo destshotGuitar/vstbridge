@@ -337,6 +337,29 @@ Editor::Editor(MainContext& main_context,
       dnd_proxy_handle_(WineXdndProxy::get_handle()),
       client_area_(get_maximum_screen_dimensions(*x11_connection_)),
       wrapper_window_size_({128, 128}),
+      xcb_wm_state_property_(
+          get_atom_by_name(*x11_connection_, wm_state_property_name)),
+      parent_window_(parent_window_handle),
+      wrapper_window_(
+          x11_connection_,
+          [parent_window = parent_window_,
+           wrapper_window_size = wrapper_window_size_](
+              std::shared_ptr<xcb_connection_t> x11_connection,
+              xcb_window_t window) {
+              xcb_generic_error_t* error = nullptr;
+              const xcb_query_tree_cookie_t query_cookie =
+                  xcb_query_tree(x11_connection.get(), parent_window);
+              const std::unique_ptr<xcb_query_tree_reply_t> query_reply(
+                  xcb_query_tree_reply(x11_connection.get(), query_cookie,
+                                       &error));
+              THROW_X11_ERROR(error);
+
+              xcb_create_window(
+                  x11_connection.get(), XCB_COPY_FROM_PARENT, window,
+                  query_reply->root, 0, 0, wrapper_window_size.width,
+                  wrapper_window_size.height, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                  XCB_COPY_FROM_PARENT, 0, nullptr);
+          }),
       // Create a window without any decoratiosn for easy embedding. The
       // combination of `WS_EX_TOOLWINDOW` and `WS_POPUP` causes the window to
       // be drawn without any decorations (making resizes behave as you'd
@@ -381,29 +404,6 @@ Editor::Editor(MainContext& main_context,
               (*timer_proc)();
           }
       }),
-      xcb_wm_state_property_(
-          get_atom_by_name(*x11_connection_, wm_state_property_name)),
-      parent_window_(parent_window_handle),
-      wrapper_window_(
-          x11_connection_,
-          [parent_window = parent_window_,
-           wrapper_window_size = wrapper_window_size_](
-              std::shared_ptr<xcb_connection_t> x11_connection,
-              xcb_window_t window) {
-              xcb_generic_error_t* error = nullptr;
-              const xcb_query_tree_cookie_t query_cookie =
-                  xcb_query_tree(x11_connection.get(), parent_window);
-              const std::unique_ptr<xcb_query_tree_reply_t> query_reply(
-                  xcb_query_tree_reply(x11_connection.get(), query_cookie,
-                                       &error));
-              THROW_X11_ERROR(error);
-
-              xcb_create_window(
-                  x11_connection.get(), XCB_COPY_FROM_PARENT, window,
-                  query_reply->root, 0, 0, wrapper_window_size.width,
-                  wrapper_window_size.height, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
-                  XCB_COPY_FROM_PARENT, 0, nullptr);
-          }),
       wine_window_(get_x11_handle(win32_window_.handle_)),
       host_window_(find_host_window(*x11_connection_,
                                     parent_window_,
