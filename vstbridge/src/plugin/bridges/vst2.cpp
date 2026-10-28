@@ -182,6 +182,10 @@ Vst2PluginBridge::Vst2PluginBridge(const ghc::filesystem::path& plugin_path,
 
     const auto initialized_plugin =
         std::get<AEffect>(initialization_data.payload);
+    if (!initialization_data.value_payload) {
+        throw std::runtime_error(
+            "The Wine plugin host did not report its version");
+    }
     const auto host_version =
         std::get<std::string>(*initialization_data.value_payload);
     warn_on_version_mismatch(host_version);
@@ -872,7 +876,9 @@ float Vst2PluginBridge::get_parameter(AEffect* /*plugin*/, int index) {
         response =
             sockets_.host_plugin_parameters_.receive_single<ParameterResult>();
     });
-    if (!received) [[unlikely]] {
+    // An answer without a value would be a protocol error, but it must not be
+    // undefined behavior on the audio thread
+    if (!received || !response.value) [[unlikely]] {
         return 0.0f;
     }
 

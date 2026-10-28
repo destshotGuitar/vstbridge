@@ -202,6 +202,18 @@ char* const* ProcessEnvironment::make_environ() const {
     return const_cast<char* const*>(recreated_environ_.data());
 }
 
+/**
+ * `waitpid()`, retried when it gets interrupted by a signal.
+ */
+static pid_t waitpid_retry(pid_t pid, int* status) noexcept {
+    pid_t result;
+    do {
+        result = waitpid(pid, status, 0);
+    } while (result < 0 && errno == EINTR);
+
+    return result;
+}
+
 Process::Handle::Handle(pid_t pid)
     : pid_(pid), pidfd_(static_cast<int>(syscall(SYS_pidfd_open, pid, 0))) {}
 
@@ -318,10 +330,7 @@ std::optional<int> Process::Handle::wait() const noexcept {
     }
 
     int status = 0;
-    pid_t result;
-    do {
-        result = waitpid(pid_, &status, 0);
-    } while (result < 0 && errno == EINTR);
+    const pid_t result = waitpid_retry(pid_, &status);
 
     if (result == pid_ && WIFEXITED(status)) {
         return WEXITSTATUS(status);
@@ -336,7 +345,9 @@ Process::StringResult Process::spawn_get_stdout_line() const {
     // We'll read the results from a pipe. The child writes to the second pipe,
     // we'll read from the first one.
     int stdout_pipe_fds[2];
-    assert(pipe(stdout_pipe_fds) == 0);
+    if (pipe(stdout_pipe_fds) != 0) {
+        return std::error_code(errno, std::system_category());
+    }
 
     const auto argv = build_argv();
     const auto envp = env_ ? env_->make_environ() : environ;
@@ -366,22 +377,39 @@ Process::StringResult Process::spawn_get_stdout_line() const {
     // Try to read the first line out the output until the line feed
     std::array<char, 1024> output{0};
     FILE* output_pipe_stream = fdopen(stdout_pipe_fds[0], "r");
-    assert(output_pipe_stream);
+    if (!output_pipe_stream) {
+        const int error = errno;
+        close(stdout_pipe_fds[0]);
+        waitpid_retry(child_pid, nullptr);
+
+        return std::error_code(error, std::system_category());
+    }
     [[maybe_unused]] char* not_relevant =
         fgets(output.data(), output.size(), output_pipe_stream);
     fclose(output_pipe_stream);
 
+    // `fgets()` returns the line feed, so we'll get rid of that
+    std::string output_str(output.data());
+    if (!output_str.empty() && output_str.back() == '\n') {
+        output_str.pop_back();
+    }
+
+    // If the host ignores `SIGCHLD`, then the child gets reaped automatically
+    // and `waitpid()` fails with `ECHILD`. We can't know the exit status in
+    // that case, so we'll go by whether the command printed anything.
     int status = 0;
-    assert(waitpid(child_pid, &status, 0) > 0);
+    const pid_t wait_result = waitpid_retry(child_pid, &status);
+    if (wait_result < 0) {
+        if (output_str.empty()) {
+            return Process::CommandNotFound{};
+        } else {
+            return output_str;
+        }
+    }
+
     if (!WIFEXITED(status) || WEXITSTATUS(status) == 127) {
         return Process::CommandNotFound{};
     } else {
-        // `fgets()` returns the line feed, so we'll get rid of that
-        std::string output_str(output.data());
-        if (!output_str.empty() && output_str.back() == '\n') {
-            output_str.pop_back();
-        }
-
         return output_str;
     }
 }
@@ -399,8 +427,14 @@ Process::StatusResult Process::spawn_get_status() const {
         return std::error_code(result, std::system_category());
     }
 
+    // See `spawn_get_stdout_line()`. Without the exit status there's nothing
+    // meaningful we can return here, so we'll return the error instead.
     int status = 0;
-    assert(waitpid(child_pid, &status, 0) > 0);
+    const pid_t wait_result = waitpid_retry(child_pid, &status);
+    if (wait_result < 0) {
+        return std::error_code(errno, std::system_category());
+    }
+
     if (!WIFEXITED(status) || WEXITSTATUS(status) == 127) {
         return Process::CommandNotFound{};
     } else {
@@ -420,8 +454,16 @@ Process::HandleResult Process::spawn_child_piped(
     // and the child process will write to the second elements.
     int stdout_pipe_fds[2];
     int stderr_pipe_fds[2];
-    assert(pipe(stdout_pipe_fds) == 0);
-    assert(pipe(stderr_pipe_fds) == 0);
+    if (pipe(stdout_pipe_fds) != 0) {
+        return std::error_code(errno, std::system_category());
+    }
+    if (pipe(stderr_pipe_fds) != 0) {
+        const int error = errno;
+        close(stdout_pipe_fds[0]);
+        close(stdout_pipe_fds[1]);
+
+        return std::error_code(error, std::system_category());
+    }
 
     const auto argv = build_argv();
     const auto envp = env_ ? env_->make_environ() : environ;
