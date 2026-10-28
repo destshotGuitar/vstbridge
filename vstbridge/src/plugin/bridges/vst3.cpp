@@ -498,7 +498,17 @@ void Vst3PluginBridge::register_plugin_proxy(
     // be run in the audio processing loop
     if (proxy_object.YaAudioProcessor::supported() ||
         proxy_object.YaComponent::supported()) {
-        sockets_.add_audio_processor_and_connect(proxy_object.instance_id());
+        // The Wine host may have died since it created the object. The proxy's
+        // constructor then throws, so it must not stay behind in this map.
+        if (!with_live_host([&]() {
+                sockets_.add_audio_processor_and_connect(
+                    proxy_object.instance_id());
+            })) {
+            sockets_.remove_audio_processor(proxy_object.instance_id());
+            plugin_proxies_.erase(proxy_object.instance_id());
+
+            throw std::runtime_error("The Wine plugin host is gone");
+        }
     }
 }
 

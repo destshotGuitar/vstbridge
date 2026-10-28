@@ -90,8 +90,16 @@ Vst3PluginFactoryProxyImpl::createInstance(Steinberg::FIDString cid,
                 // newly initialized object (that initializes itself with a
                 // reference count of 1), and then the receiving side will use
                 // `Steinberg::owned()` to adopt it to an `IPtr<T>`.
-                Vst3PluginProxyImpl* proxy_object =
-                    new Vst3PluginProxyImpl(bridge_, std::move(args));
+                Vst3PluginProxyImpl* proxy_object = nullptr;
+                try {
+                    proxy_object =
+                        new Vst3PluginProxyImpl(bridge_, std::move(args));
+                } catch (const std::exception&) {
+                    // Connecting the audio processor socket failed because the
+                    // Wine host died after it created the object
+                    *obj = nullptr;
+                    return Steinberg::kResultFalse;
+                }
 
                 // We return a properly downcasted version of the proxy object
                 // we just created
