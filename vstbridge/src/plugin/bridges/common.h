@@ -19,6 +19,8 @@
 #include <atomic>
 #include <future>
 #include <iomanip>
+#include <stdexcept>
+#include <vector>
 
 #include <sys/resource.h>
 
@@ -423,14 +425,16 @@ class PluginBridge {
     }
 
     /**
-     * Connect the sockets, while starting another thread that will terminate
-     * the plugin (through `std::terminate`/SIGABRT) when the host process fails
-     * to start. This is the only way to stop listening on our sockets without
-     * moving everything over to asynchronous listeners (which may actually be a
-     * good idea just for this use case). Otherwise the plugin would be stuck
-     * loading indefinitely when Wine is not configured correctly.
+     * Connect the sockets, while starting another thread that watches whether
+     * the host process is still running. If the Wine process fails to start
+     * or exits before it connected, then nothing will ever connect to our
+     * sockets and we would be hanging here indefinitely. This used to be
+     * solved by terminating the whole host application through
+     * `std::terminate()`. Instead the watchdog now unblocks the pending
+     * accepts by connecting to the sockets itself, after which this function
+     * throws so the plugin simply fails to load.
      *
-     * TODO: Asynchronously connect our sockets so we can interrupt it, maybe
+     * @throw std::runtime_error If the Wine host exited before connecting.
      */
     void connect_sockets_guarded() {
 #ifndef WITH_WINEDBG
@@ -455,6 +459,7 @@ class PluginBridge {
 
             while (!st.stop_requested()) {
                 if (!plugin_host_->running()) {
+                    host_exited = true;
                     generic_logger_.log(
                         "The Wine host process has exited unexpectedly. Check "
                         "the output above for more information.");

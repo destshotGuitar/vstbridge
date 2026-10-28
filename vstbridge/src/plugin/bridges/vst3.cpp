@@ -449,12 +449,27 @@ Steinberg::IPluginFactory* Vst3PluginBridge::get_plugin_factory() {
         // will request after loading the module. Host callback handlers should
         // have started before this since the Wine plugin host will request a
         // copy of the configuration during its initialization.
-        Vst3PluginFactoryProxy::ConstructArgs factory_args =
-            sockets_.host_plugin_control_.send_message(
-                Vst3PluginFactoryProxy::Construct{},
-                std::pair<Vst3Logger&, bool>(logger_, true));
+        // This is called from a C entry point, so nothing may be thrown from
+        // here. Without a factory the host treats the plugin as failed to load.
+        std::optional<Vst3PluginFactoryProxy::ConstructArgs> factory_args;
+        try {
+            with_live_host([&]() {
+                factory_args = sockets_.host_plugin_control_.send_message(
+                    Vst3PluginFactoryProxy::Construct{},
+                    std::pair<Vst3Logger&, bool>(logger_, true));
+            });
+        } catch (const std::exception& error) {
+            generic_logger_.log(
+                "Failed to fetch the plugin factory from the Wine host: " +
+                std::string(error.what()));
+        }
+
+        if (!factory_args) {
+            return nullptr;
+        }
+
         plugin_factory_ = Steinberg::owned(
-            new Vst3PluginFactoryProxyImpl(*this, std::move(factory_args)));
+            new Vst3PluginFactoryProxyImpl(*this, std::move(*factory_args)));
     }
 
     // Because we're returning a raw pointer, we have to increase the reference
