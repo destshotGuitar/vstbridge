@@ -525,10 +525,12 @@ Process::HandleResult Process::spawn_child_piped(
     // exist, but the specification says that it should return a PID that exits
     // with status 127 instead. I have no idea how we'd check for that without
     // waiting here though, so this check may not work
+    // This fails with `ECHILD` if the host ignores `SIGCHLD` and the child
+    // already exited, in which case we can't check the exit status
     int status = 0;
     [[maybe_unused]] const pid_t wait_result =
         waitpid(child_pid, &status, WNOHANG);
-    assert(wait_result >= 0);
+    assert(wait_result >= 0 || errno == ECHILD);
     if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
         // The child has already been reaped above, so there is nothing left to
         // terminate or wait for.
@@ -581,7 +583,7 @@ Process::HandleResult Process::spawn_child_redirected(
     int status = 0;
     [[maybe_unused]] const pid_t wait_result =
         waitpid(child_pid, &status, WNOHANG);
-    assert(wait_result >= 0);
+    assert(wait_result >= 0 || errno == ECHILD);
     if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
         child.detach();
         return Process::CommandNotFound{};
