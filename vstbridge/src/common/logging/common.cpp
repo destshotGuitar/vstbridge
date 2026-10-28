@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 
 /**
  * The environment variable indicating whether to log to a file. Will log to
@@ -143,5 +144,9 @@ void Logger::log(const std::string& message) {
     // stream to prevent two messages from being put on the same row
     formatted_message << std::endl;
 
+    // Multiple threads, and multiple bridges in a group host, can share the
+    // same output stream
+    static std::mutex stream_mutex;
+    std::lock_guard lock(stream_mutex);
     *stream_ << formatted_message.str() << std::flush;
 }
