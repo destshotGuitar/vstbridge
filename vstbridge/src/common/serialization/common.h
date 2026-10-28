@@ -63,7 +63,7 @@ class PrimitiveResponse {
     }
 
    private:
-    T value_;
+    T value_{};
 };
 
 /**

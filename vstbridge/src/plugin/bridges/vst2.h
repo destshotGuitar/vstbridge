@@ -129,6 +129,13 @@ class Vst2PluginBridge : PluginBridge<Vst2Sockets<std::jthread>> {
     void do_process(T** inputs, T** outputs, int sample_frames);
 
     /**
+     * Used in `do_process()` to output silence once the Wine plugin host has
+     * died.
+     */
+    template <typename T, bool replacing>
+    void write_silence(T** outputs, int sample_frames);
+
+    /**
      * This AEffect struct will be populated using the data passed by the Wine
      * VST host during initialization and then passed as a pointer to the Linux
      * native VST host from the Linux VST plugin's entry point.

@@ -37,6 +37,36 @@ constexpr char other_instance_message_id[] = "vstbridge_other_instance";
  */
 constexpr char other_instance_pointer_attribute[] = "other_proxy_ptr";
 
+/**
+ * Fill all of the host's output buffers with silence. Used in
+ * `Vst3PluginProxyImpl::process()` once the Wine plugin host has died.
+ */
+static void write_silence(Steinberg::Vst::ProcessData& data) noexcept {
+    for (int32 bus = 0; bus < data.numOutputs; bus++) {
+        Steinberg::Vst::AudioBusBuffers& buffers = data.outputs[bus];
+        for (int32 channel = 0; channel < buffers.numChannels; channel++) {
+            if (data.symbolicSampleSize == Steinberg::Vst::kSample64) {
+                if (buffers.channelBuffers64 &&
+                    buffers.channelBuffers64[channel]) {
+                    std::fill_n(buffers.channelBuffers64[channel],
+                                data.numSamples, 0.0);
+                }
+            } else {
+                if (buffers.channelBuffers32 &&
+                    buffers.channelBuffers32[channel]) {
+                    std::fill_n(buffers.channelBuffers32[channel],
+                                data.numSamples, 0.0f);
+                }
+            }
+        }
+
+        buffers.silenceFlags =
+            buffers.numChannels >= 64
+                ? ~static_cast<uint64>(0)
+                : (static_cast<uint64>(1) << buffers.numChannels) - 1;
+    }
+}
+
 Vst3PluginProxyImpl::ContextMenu::ContextMenu(
     Steinberg::IPtr<Steinberg::Vst::IContextMenu> menu)
     : menu(menu) {}
@@ -227,6 +257,13 @@ tresult PLUGIN_API Vst3PluginProxyImpl::setProcessing(TBool state) {
 
 tresult PLUGIN_API
 Vst3PluginProxyImpl::process(Steinberg::Vst::ProcessData& data) {
+    // Without the Wine plugin host there's nothing left to process. This has to
+    // come first, since `setActive()` may never have set up `process_buffers_`.
+    if (bridge_.host_died()) [[unlikely]] {
+        write_silence(data);
+        return Steinberg::kResultOk;
+    }
+
     // We'll synchronize the scheduling priority of the audio thread on the Wine
     // plugin host with that of the host's audio thread every once in a while
     std::optional<int> new_realtime_priority = std::nullopt;
@@ -264,6 +301,13 @@ Vst3PluginProxyImpl::process(Steinberg::Vst::ProcessData& data) {
     bridge_.receive_audio_processor_message_into(
         MessageReference<YaAudioProcessor::Process>(process_request_),
         process_response_);
+
+    // The host may have died during this call, in which case the shared audio
+    // buffers don't contain anything useful
+    if (bridge_.host_died()) [[unlikely]] {
+        write_silence(data);
+        return Steinberg::kResultOk;
+    }
 
     // At this point the shared audio buffers should contain the output audio,
     // so we'll write that back to the host along with any metadata (which in
@@ -1018,7 +1062,10 @@ tresult PLUGIN_API Vst3PluginProxyImpl::getPhysicalUIMapping(
             .channel = channel,
             .list = list});
 
-    response.list.write_back(list);
+    // A default response from a dead Wine plugin host has an empty list
+    if (!bridge_.host_died()) {
+        response.list.write_back(list);
+    }
 
     return response.result;
 }

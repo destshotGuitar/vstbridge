@@ -50,6 +50,21 @@ constexpr int memlock_min_safe_threshold = 256 << 20;
 constexpr int rttime_min_safe_threshold = 30'000'000;
 
 /**
+ * Whether a socket error means that the Wine plugin host can no longer be
+ * reached, either because the process died or because the sockets have already
+ * been closed on our side.
+ */
+inline bool is_connection_lost(const std::error_code& error) noexcept {
+    return error == asio::error::eof || error == asio::error::broken_pipe ||
+           error == asio::error::connection_reset ||
+           error == asio::error::connection_aborted ||
+           error == asio::error::connection_refused ||
+           error == asio::error::not_connected ||
+           error == asio::error::bad_descriptor ||
+           error == asio::error::shut_down;
+}
+
+/**
  * Handles all common operations for hosting plugins such as initializing up the
  * plugin host process, setting up the logger, and logging debug information on
  * startup.
@@ -132,7 +147,47 @@ class PluginBridge {
 
     virtual ~PluginBridge() noexcept = default;
 
+    /**
+     * Whether we lost the connection to the Wine plugin host. After this the
+     * plugin no longer does anything, but the host application keeps running.
+     *
+     * @see with_live_host
+     */
+    bool host_died() const noexcept {
+        return host_died_.load(std::memory_order_relaxed);
+    }
+
    protected:
+    /**
+     * Run `fn`, which communicates with the Wine plugin host. If the host is
+     * already known to be dead, or if `fn` fails because the connection to the
+     * host was lost, then this returns `false` instead of throwing. Previously
+     * that exception would escape a plugin API function, which terminates the
+     * host application and takes the user's unsaved work with it. Any other
+     * exception is rethrown.
+     *
+     * @return Whether `fn` ran to completion.
+     */
+    template <std::invocable F>
+    bool with_live_host(F&& fn) {
+        if (host_died()) [[unlikely]] {
+            return false;
+        }
+
+        try {
+            std::forward<F>(fn)();
+            return true;
+        } catch (const std::system_error& error) {
+            if (!is_connection_lost(error.code())) {
+                throw;
+            }
+
+            mark_host_died(error);
+            return false;
+        }
+    }
+
+
     /**
      * Format and log all relevant debug information during initialization.
      */
@@ -522,6 +577,54 @@ class PluginBridge {
     std::unique_ptr<HostProcess> plugin_host_;
 
    private:
+    /**
+     * Called by `with_live_host()` the first time we notice that the Wine
+     * plugin host can no longer be reached. This may happen on the audio
+     * thread, so the desktop notification is sent from another thread.
+     */
+    void mark_host_died(const std::system_error& error) noexcept {
+        if (host_died_.exchange(true)) {
+            return;
+        }
+
+        try {
+            generic_logger_.log("");
+            generic_logger_.log("Lost the connection to the Wine plugin host (" +
+                                error.code().message() + ").");
+            generic_logger_.log(
+                "The plugin will output silence and ignore all further calls. "
+                "Reload the project or re-add the plugin to restart it.");
+            generic_logger_.log("");
+
+            host_died_notifier_ =
+                std::jthread([origin = info_.native_library_path_]() {
+                    pthread_setname_np(pthread_self(), "host-died");
+
+                    send_notification(
+                        "The Wine plugin host has stopped",
+                        "This plugin will output silence until it is "
+                        "restarted, and its state can no longer be saved. "
+                        "Reload the project or re-add the plugin.",
+                        origin);
+                });
+        } catch (...) {
+            // Logging is best effort, the plugin has to keep going either way
+        }
+    }
+
+    /**
+     * Set by `mark_host_died()`.
+     *
+     * @see host_died
+     */
+    std::atomic_bool host_died_ = false;
+
+    /**
+     * Sends the desktop notification from `mark_host_died()`. Joined when the
+     * bridge gets destroyed.
+     */
+    std::jthread host_died_notifier_;
+
     /**
      * The promise belonging to `has_realtime_priority_` below.
      */

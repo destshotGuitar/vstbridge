@@ -529,6 +529,17 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
         return 0;
     }
 
+    // Once the Wine plugin host has died there's nobody left to answer, so
+    // everything except for `effClose` gets a `0`. `effEditGetRect` should
+    // still point to a rectangle in case the host doesn't check the result.
+    if (host_died() && opcode != effClose) [[unlikely]] {
+        if (opcode == effEditGetRect && data) {
+            *static_cast<VstRect**>(data) = &editor_rectangle_;
+        }
+
+        return 0;
+    }
+
     DispatchDataConverter converter(process_buffers_, chunk_data_, plugin_,
                                     editor_rectangle_);
 
@@ -618,10 +629,12 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
             // Remember whether the plugin implements PreSonus' gain reduction
             // API, so the per-block query below can be answered locally
             if (query == "supportsGainReductionInfo") {
-                const intptr_t result =
-                    sockets_.host_plugin_dispatch_.send_event(
+                intptr_t result = 0;
+                with_live_host([&]() {
+                    result = sockets_.host_plugin_dispatch_.send_event(
                         converter, std::pair<Vst2Logger&, bool>(logger_, true),
                         opcode, index, value, data, option);
+                });
                 gain_reduction_support_ = result == 1
                                               ? GainReductionSupport::yes
                                               : GainReductionSupport::no;
@@ -654,14 +667,27 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
     // and loading plugin state it's much better to have bitsery or our
     // receiving function temporarily allocate a large enough buffer rather than
     // to have a bunch of allocated memory sitting around doing nothing.
-    return sockets_.host_plugin_dispatch_.send_event(
-        converter, std::pair<Vst2Logger&, bool>(logger_, true), opcode, index,
-        value, data, option);
+    intptr_t result = 0;
+    with_live_host([&]() {
+        result = sockets_.host_plugin_dispatch_.send_event(
+            converter, std::pair<Vst2Logger&, bool>(logger_, true), opcode,
+            index, value, data, option);
+    });
+
+    return result;
 }
 
 template <typename T, bool replacing>
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void Vst2PluginBridge::do_process(T** inputs, T** outputs, int sample_frames) {
+    // Without the Wine plugin host there's nothing left to process. This has to
+    // come first, since `effMainsChanged` may never have set up
+    // `process_buffers_`.
+    if (host_died()) [[unlikely]] {
+        write_silence<T, replacing>(outputs, sample_frames);
+        return;
+    }
+
     // During audio processing we'll write the inputs to shared memory buffers,
     // and we'll then send this request alongside it with additional information
     // needed to process audio
@@ -729,12 +755,18 @@ void Vst2PluginBridge::do_process(T** inputs, T** outputs, int sample_frames) {
     // After writing audio to the shared memory buffers, we'll send the
     // processing request parameters to the Wine plugin host so it can start
     // processing audio. This is why we don't need any explicit synchronisation.
-    sockets_.host_plugin_process_replacing_.send(request);
+    const bool processed = with_live_host([&]() {
+        sockets_.host_plugin_process_replacing_.send(request);
 
-    // From the Wine side we'll send a zero byte struct back as an
-    // acknowledgement that audio processing has finished. At this point the
-    // audio will have been written to our buffers.
-    sockets_.host_plugin_process_replacing_.receive_single<Ack>();
+        // From the Wine side we'll send a zero byte struct back as an
+        // acknowledgement that audio processing has finished. At this point
+        // the audio will have been written to our buffers.
+        sockets_.host_plugin_process_replacing_.receive_single<Ack>();
+    });
+    if (!processed) [[unlikely]] {
+        write_silence<T, replacing>(outputs, sample_frames);
+        return;
+    }
 
     for (int channel = 0; channel < plugin_.numOutputs; channel++) {
         const T* output_channel =
@@ -772,6 +804,16 @@ void Vst2PluginBridge::do_process(T** inputs, T** outputs, int sample_frames) {
     }
 
     incoming_midi_events_.clear();
+}
+
+template <typename T, bool replacing>
+void Vst2PluginBridge::write_silence(T** outputs, int sample_frames) {
+    // The accumulating `process()` should leave the host's buffers alone
+    if constexpr (replacing) {
+        for (int channel = 0; channel < plugin_.numOutputs; channel++) {
+            std::fill_n(outputs[channel], sample_frames, static_cast<T>(0));
+        }
+    }
 }
 
 void Vst2PluginBridge::process(AEffect* /*plugin*/,
@@ -812,12 +854,15 @@ float Vst2PluginBridge::get_parameter(AEffect* /*plugin*/, int index) {
 
     // Prevent race conditions from `getParameter()` and `setParameter()` being
     // called at the same time since  they share the same socket
-    {
+    const bool received = with_live_host([&]() {
         std::lock_guard lock(parameters_mutex_);
         sockets_.host_plugin_parameters_.send(request);
 
         response =
             sockets_.host_plugin_parameters_.receive_single<ParameterResult>();
+    });
+    if (!received) [[unlikely]] {
+        return 0.0f;
     }
 
     logger_.log_get_parameter_response(*response.value);
@@ -833,13 +878,13 @@ void Vst2PluginBridge::set_parameter(AEffect* /*plugin*/,
     const Parameter request{index, value};
     ParameterResult response;
 
-    {
+    with_live_host([&]() {
         std::lock_guard lock(parameters_mutex_);
         sockets_.host_plugin_parameters_.send(request);
 
         response =
             sockets_.host_plugin_parameters_.receive_single<ParameterResult>();
-    }
+    });
 
     logger_.log_set_parameter_response();
 

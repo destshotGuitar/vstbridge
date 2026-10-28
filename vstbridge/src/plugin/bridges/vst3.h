@@ -113,6 +113,8 @@ class Vst3PluginBridge : PluginBridge<Vst3Sockets<std::jthread>> {
      */
     Steinberg::IPluginFactory* get_plugin_factory();
 
+    using PluginBridge::host_died;
+
     /**
      * Fetch the plugin proxy instance along with a lock valid for the
      * instance's lifetime. This is mostly just to save some boilerplate
@@ -158,8 +160,16 @@ class Vst3PluginBridge : PluginBridge<Vst3Sockets<std::jthread>> {
      */
     template <typename T>
     typename T::Response send_message(const T& object) {
-        return sockets_.host_plugin_control_.send_message(
-            object, std::pair<Vst3Logger&, bool>(logger_, true));
+        // If the Wine plugin host has died, then this returns a default
+        // initialized response, which is `kResultFalse` for `tresult`s
+        typename T::Response response_object{};
+        with_live_host([&]() {
+            sockets_.host_plugin_control_.receive_into(
+                object, response_object,
+                std::pair<Vst3Logger&, bool>(logger_, true));
+        });
+
+        return response_object;
     }
 
     /**
@@ -170,8 +180,13 @@ class Vst3PluginBridge : PluginBridge<Vst3Sockets<std::jthread>> {
      */
     template <typename T>
     typename T::Response send_audio_processor_message(const T& object) {
-        return sockets_.send_audio_processor_message(
-            object, std::pair<Vst3Logger&, bool>(logger_, true));
+        typename T::Response response_object{};
+        with_live_host([&]() {
+            response_object = sockets_.send_audio_processor_message(
+                object, std::pair<Vst3Logger&, bool>(logger_, true));
+        });
+
+        return response_object;
     }
 
     /**
@@ -184,9 +199,13 @@ class Vst3PluginBridge : PluginBridge<Vst3Sockets<std::jthread>> {
     typename T::Response& receive_audio_processor_message_into(
         const T& object,
         typename T::Response& response_object) {
-        return sockets_.receive_audio_processor_message_into(
-            object, response_object,
-            std::pair<Vst3Logger&, bool>(logger_, true));
+        with_live_host([&]() {
+            sockets_.receive_audio_processor_message_into(
+                object, response_object,
+                std::pair<Vst3Logger&, bool>(logger_, true));
+        });
+
+        return response_object;
     }
 
     /**

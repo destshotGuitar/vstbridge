@@ -76,6 +76,13 @@ Vst3PluginFactoryProxyImpl::createInstance(Steinberg::FIDString cid,
         bridge_.send_mutually_recursive_message(Vst3PluginProxy::Construct{
             .cid = cid_array, .requested_interface = requested_interface});
 
+    // If the Wine plugin host has died, then `result` contains default
+    // constructed arguments rather than an actual object
+    if (bridge_.host_died()) {
+        *obj = nullptr;
+        return Steinberg::kResultFalse;
+    }
+
     return std::visit(
         overload{
             [&](Vst3PluginProxy::ConstructArgs&& args) -> tresult {
