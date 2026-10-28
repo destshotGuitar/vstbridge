@@ -364,6 +364,7 @@ Process::StringResult Process::spawn_get_stdout_line() const {
     pid_t child_pid = 0;
     const auto result = posix_spawnp(&child_pid, command_.c_str(), &actions,
                                      nullptr, argv, envp);
+    posix_spawn_file_actions_destroy(&actions);
 
     close(stdout_pipe_fds[1]);
     if (result == 2) {
@@ -474,6 +475,11 @@ Process::HandleResult Process::spawn_child_piped(
                                      STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, stderr_pipe_fds[1],
                                      STDERR_FILENO);
+    // Some Wine builds crash during startup when STDIN is closed, which can
+    // happen when the host itself was started without a STDIN. The Wine host
+    // never reads from STDIN, so we'll always give it `/dev/null` instead.
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
+                                     O_RDONLY, 0);
     // We'll close the four pipe fds along with the rest of the file descriptors
 
 // NOTE: If the Wine process outlives the host, then it may cause issues if
@@ -493,6 +499,7 @@ Process::HandleResult Process::spawn_child_piped(
     pid_t child_pid = 0;
     const auto result = posix_spawnp(&child_pid, command_.c_str(), &actions,
                                      nullptr, argv, envp);
+    posix_spawn_file_actions_destroy(&actions);
 
     // We'll assign the read ends of the pipes to the Asio stream descriptors
     // passed to this function, even if launching the process failed.
@@ -519,7 +526,9 @@ Process::HandleResult Process::spawn_child_piped(
     // with status 127 instead. I have no idea how we'd check for that without
     // waiting here though, so this check may not work
     int status = 0;
-    assert(waitpid(child_pid, &status, WNOHANG) >= 0);
+    [[maybe_unused]] const pid_t wait_result =
+        waitpid(child_pid, &status, WNOHANG);
+    assert(wait_result >= 0);
     if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
         // The child has already been reaped above, so there is nothing left to
         // terminate or wait for.
@@ -556,6 +565,7 @@ Process::HandleResult Process::spawn_child_redirected(
     pid_t child_pid = 0;
     const auto result = posix_spawnp(&child_pid, command_.c_str(), &actions,
                                      nullptr, argv, envp);
+    posix_spawn_file_actions_destroy(&actions);
     if (result == 2) {
         return Process::CommandNotFound{};
     } else if (result != 0) {
@@ -569,7 +579,9 @@ Process::HandleResult Process::spawn_child_redirected(
     // This fails with `ECHILD` if the host ignores `SIGCHLD` and the child
     // already exited, in which case we can't check the exit status
     int status = 0;
-    assert(waitpid(child_pid, &status, WNOHANG) >= 0);
+    [[maybe_unused]] const pid_t wait_result =
+        waitpid(child_pid, &status, WNOHANG);
+    assert(wait_result >= 0);
     if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
         child.detach();
         return Process::CommandNotFound{};
