@@ -72,17 +72,20 @@ bool initialize_library() {
         return true;
     }
 
-    library_handle = find_plugin_library(vstbridge_vst2_plugin_name);
-    if (!library_handle) {
+    // The handle is only stored once every function has been found. Otherwise
+    // a later call would report success with some of them still null.
+    void* handle = find_plugin_library(vstbridge_vst2_plugin_name);
+    if (!handle) {
         return false;
     }
 
 #define LOAD_FUNCTION(name)                                                 \
     do {                                                                    \
         (name) =                                                            \
-            reinterpret_cast<decltype(name)>(dlsym(library_handle, #name)); \
+            reinterpret_cast<decltype(name)>(dlsym(handle, #name));         \
         if (!(name)) {                                                      \
             log_failing_dlsym(vstbridge_vst2_plugin_name, #name);            \
+            dlclose(handle);                                                \
             return false;                                                   \
         }                                                                   \
     } while (false)
@@ -93,9 +96,11 @@ bool initialize_library() {
     // yabridge version
     remote_vstbridge_version =
         reinterpret_cast<decltype(remote_vstbridge_version)>(
-            dlsym(library_handle, "vstbridge_version"));
+            dlsym(handle, "vstbridge_version"));
 
 #undef LOAD_FUNCTION
+
+    library_handle = handle;
 
     return true;
 }

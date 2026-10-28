@@ -89,17 +89,20 @@ bool initialize_library() {
         return true;
     }
 
-    library_handle = find_plugin_library(vstbridge_vst3_plugin_name);
-    if (!library_handle) {
+    // The handle is only stored once every function has been found. Otherwise
+    // a later call would report success with some of them still null.
+    void* handle = find_plugin_library(vstbridge_vst3_plugin_name);
+    if (!handle) {
         return false;
     }
 
 #define LOAD_FUNCTION(name)                                                 \
     do {                                                                    \
         (name) =                                                            \
-            reinterpret_cast<decltype(name)>(dlsym(library_handle, #name)); \
+            reinterpret_cast<decltype(name)>(dlsym(handle, #name));         \
         if (!(name)) {                                                      \
             log_failing_dlsym(vstbridge_vst3_plugin_name, #name);            \
+            dlclose(handle);                                                \
             return false;                                                   \
         }                                                                   \
     } while (false)
@@ -112,9 +115,11 @@ bool initialize_library() {
     // yabridge version
     remote_vstbridge_version =
         reinterpret_cast<decltype(remote_vstbridge_version)>(
-            dlsym(library_handle, "vstbridge_version"));
+            dlsym(handle, "vstbridge_version"));
 
 #undef LOAD_FUNCTION
+
+    library_handle = handle;
 
     return true;
 }
@@ -123,7 +128,10 @@ extern "C" VSTBRIDGE_EXPORT bool ModuleEntry(void*) {
     // This function can be called multiple times, so we should make sure to
     // only initialize the bridge on the first call
     if (active_instances.fetch_add(1, std::memory_order_seq_cst) == 0) {
+        // On failure the count is rolled back, or the next call would report
+        // success without a bridge
         if (!initialize_library()) {
+            active_instances.fetch_sub(1, std::memory_order_seq_cst);
             return false;
         }
 
@@ -134,6 +142,7 @@ extern "C" VSTBRIDGE_EXPORT bool ModuleEntry(void*) {
             decltype(bridge)(vstbridge_module_init(this_plugin_path.c_str()),
                              vstbridge_module_free);
         if (!bridge) {
+            active_instances.fetch_sub(1, std::memory_order_seq_cst);
             return false;
         }
     }
@@ -152,10 +161,23 @@ extern "C" VSTBRIDGE_EXPORT bool ModuleExit() {
 }
 
 extern "C" VSTBRIDGE_EXPORT PluginFactory* GetPluginFactory() {
-    // The host should have called `InitModule()` first. A host that calls this
-    // even though that failed (the Wine plugin host didn't start) gets no
-    // factory instead of a crash.
+    // The host should have called `InitModule()` first, and that may have
+    // failed
     if (!bridge) {
+        return nullptr;
+    }
+
+    return vstbridge_module_get_plugin_factory(bridge.get());
+}
+
+/**
+ * This returns the actual yabridge library's version through
+ * `vstbridge_version()`. Reporting the version associated with this chainloader
+ * wouldn't be very useful, and that would also cause the chainloader to be
+ * rebuilt on every git commit in development.
+ */
+extern "C" VSTBRIDGE_EXPORT const char* vstbridge_version() {
+    if (!initialize_library() || !remote_vstbridge_version) {
         return nullptr;
     }
 

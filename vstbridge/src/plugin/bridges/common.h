@@ -55,9 +55,17 @@ constexpr int rttime_min_safe_threshold = 30'000'000;
  * Whether a socket error means that the Wine plugin host can no longer be
  * reached, either because the process died or because the sockets have already
  * been closed on our side.
+ *
+ * A refused or missing ad-hoc socket only gets here after the first message
+ * went through: before that `AdHocSocketHandler::send()` falls back to the
+ * primary socket, and the other side creates its ad-hoc acceptor before it
+ * answers anything. After that point either error means the Wine host is gone
+ * (`ENOENT` once the socket file is gone).
  */
 inline bool is_connection_lost(const std::error_code& error) noexcept {
     return error == asio::error::eof || error == asio::error::broken_pipe ||
+           error == std::errc::no_such_file_or_directory ||
+           error == asio::error::operation_aborted ||
            error == asio::error::connection_reset ||
            error == asio::error::connection_aborted ||
            error == asio::error::connection_refused ||

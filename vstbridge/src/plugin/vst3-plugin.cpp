@@ -122,8 +122,11 @@ bool DeinitModule() {
  */
 extern "C" VSTBRIDGE_EXPORT Steinberg::IPluginFactory* PLUGIN_API
 GetPluginFactory() {
-    // The host should have called `InitModule()` first
-    assert(bridge);
+    // The host should have called `InitModule()` first, and that may have
+    // failed
+    if (!bridge) {
+        return nullptr;
+    }
 
     return bridge->get_plugin_factory();
 }
