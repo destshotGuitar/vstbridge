@@ -1140,7 +1140,29 @@ class TypedMessageHandler : public AdHocSocketHandler<Thread> {
                 // type, and we can scrap a lot of boilerplate elsewhere.
                 std::visit(
                     [&]<typename T>(T object) {
-                        typename T::Response response = callback(object);
+                        // An exception escaping this thread terminates the
+                        // whole process. This happens for instance when a
+                        // callback arrives for an object that has already been
+                        // removed. Sending back a default response instead
+                        // keeps both sides in sync. Socket errors still end
+                        // the loop as before.
+                        typename T::Response response =
+                            [&]() -> typename T::Response {
+                            try {
+                                return callback(object);
+                            } catch (const std::system_error&) {
+                                throw;
+                            } catch (const std::exception& error) {
+                                if (logging) {
+                                    logging->first.logger_.log(
+                                        "Failed to handle a request, sending "
+                                        "back a default response: " +
+                                        std::string(error.what()));
+                                }
+
+                                return typename T::Response{};
+                            }
+                        }();
 
                         if (should_log_response) {
                             auto [logger, is_host_plugin] = *logging;

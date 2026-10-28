@@ -232,8 +232,7 @@ tresult PLUGIN_API YaBStream::setStreamSize(int64 size) {
 
 tresult PLUGIN_API YaBStream::getFileName(Steinberg::Vst::String128 name) {
     if (name && file_name_) {
-        std::copy(file_name_->begin(), file_name_->end(), name);
-        name[file_name_->size()] = 0;
+        copy_to_string128(*file_name_, name);
 
         return Steinberg::kResultOk;
     } else {

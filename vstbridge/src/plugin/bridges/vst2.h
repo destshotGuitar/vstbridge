@@ -199,7 +199,7 @@ class Vst2PluginBridge : PluginBridge<Vst2Sockets<std::jthread>> {
      * The VST host will expect to be returned a pointer to a struct that stores
      * the dimensions of the editor window.
      */
-    VstRect editor_rectangle_;
+    VstRect editor_rectangle_{};
 
     /**
      * Sending MIDI events sent to the host by the plugin using

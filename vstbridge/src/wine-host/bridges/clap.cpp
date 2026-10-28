@@ -927,7 +927,7 @@ void ClapBridge::close_sockets() {
 }
 
 std::pair<ClapPluginInstance&, std::shared_lock<std::shared_mutex>>
-ClapBridge::get_instance(size_t instance_id) noexcept {
+ClapBridge::get_instance(size_t instance_id) {
     std::shared_lock lock(object_instances_mutex_);
 
     return std::pair<ClapPluginInstance&, std::shared_lock<std::shared_mutex>>(
@@ -965,7 +965,9 @@ std::optional<AudioShmBuffer::Config> ClapBridge::setup_shared_audio_buffers(
         std::vector<std::vector<uint32_t>> offsets(num_ports);
         for (uint32_t port = 0; port < num_ports; port++) {
             clap_audio_port_info_t info{};
-            assert(audio_ports->get(plugin, port, is_input, &info));
+            [[maybe_unused]] const bool got_info =
+                audio_ports->get(plugin, port, is_input, &info);
+            assert(got_info);
 
             // If the audio port supports 64-bit audio, then we should allocate
             // enough memory for that

@@ -528,7 +528,12 @@ tresult PLUGIN_API Vst3PluginProxyImpl::getState(Steinberg::IBStream* state) {
             bridge_.send_mutually_recursive_message(Vst3PluginProxy::GetState{
                 .instance_id = instance_id(), .state = state});
 
-        assert(response.state.write_back(state) == Steinberg::kResultOk);
+        // If the host's stream rejects the data, then reporting success would
+        // silently lose the plugin's state
+        if (const tresult write_result = response.state.write_back(state);
+            write_result != Steinberg::kResultOk) {
+            return write_result;
+        }
 
         return response.result;
     } else {
@@ -734,8 +739,7 @@ tresult PLUGIN_API Vst3PluginProxyImpl::getParamStringByValue(
                 .id = id,
                 .value_normalized = valueNormalized});
 
-        std::copy(response.string.begin(), response.string.end(), string);
-        string[response.string.size()] = 0;
+        copy_to_string128(response.string, string);
 
         return response.result;
     } else {
@@ -1012,8 +1016,7 @@ tresult PLUGIN_API Vst3PluginProxyImpl::getNoteExpressionStringByValue(
                     .id = id,
                     .value_normalized = valueNormalized});
 
-        std::copy(response.string.begin(), response.string.end(), string);
-        string[response.string.size()] = 0;
+        copy_to_string128(response.string, string);
 
         return response.result;
     } else {
@@ -1112,6 +1115,12 @@ tresult PLUGIN_API Vst3PluginProxyImpl::initialize(FUnknown* context) {
                 .host_context_args = Vst3HostContextProxy::ConstructArgs(
                     host_context_, instance_id())});
 
+        // The default response we get when the Wine host is gone does not
+        // describe this object, so there's nothing to update
+        if (bridge_.host_died()) {
+            return Steinberg::kResultFalse;
+        }
+
         // HACK: For some reason, Waves plugins will only allow querying the
         //       `IEditController` interface after this point, so we need to
         //       update the list of interfaces we support for this object.
@@ -1166,7 +1175,12 @@ Vst3PluginProxyImpl::getProgramData(Steinberg::Vst::ProgramListID listId,
                                               .program_index = programIndex,
                                               .data = data});
 
-        assert(response.data.write_back(data) == Steinberg::kResultOk);
+        // If the host's stream rejects the data, then reporting success would
+        // silently lose the plugin's state
+        if (const tresult write_result = response.data.write_back(data);
+            write_result != Steinberg::kResultOk) {
+            return write_result;
+        }
 
         return response.result;
     } else {
@@ -1209,7 +1223,12 @@ Vst3PluginProxyImpl::getUnitData(Steinberg::Vst::UnitID unitId,
             bridge_.send_gui_thread_message(YaUnitData::GetUnitData{
                 .instance_id = instance_id(), .unit_id = unitId, .data = data});
 
-        assert(response.data.write_back(data) == Steinberg::kResultOk);
+        // If the host's stream rejects the data, then reporting success would
+        // silently lose the plugin's state
+        if (const tresult write_result = response.data.write_back(data);
+            write_result != Steinberg::kResultOk) {
+            return write_result;
+        }
 
         return response.result;
     } else {
@@ -1276,8 +1295,7 @@ Vst3PluginProxyImpl::getProgramName(Steinberg::Vst::ProgramListID listId,
                                        .list_id = listId,
                                        .program_index = programIndex});
 
-        std::copy(response.name.begin(), response.name.end(), name);
-        name[response.name.size()] = 0;
+        copy_to_string128(response.name, name);
 
         return response.result;
     } else {
@@ -1299,9 +1317,7 @@ tresult PLUGIN_API Vst3PluginProxyImpl::getProgramInfo(
                                        .program_index = programIndex,
                                        .attribute_id = attributeId});
 
-        std::copy(response.attribute_value.begin(),
-                  response.attribute_value.end(), attributeValue);
-        attributeValue[response.attribute_value.size()] = 0;
+        copy_to_string128(response.attribute_value, attributeValue);
 
         return response.result;
     } else {
@@ -1332,8 +1348,7 @@ tresult PLUGIN_API Vst3PluginProxyImpl::getProgramPitchName(
                                             .program_index = programIndex,
                                             .midi_pitch = midiPitch});
 
-        std::copy(response.name.begin(), response.name.end(), name);
-        name[response.name.size()] = 0;
+        copy_to_string128(response.name, name);
 
         return response.result;
     } else {

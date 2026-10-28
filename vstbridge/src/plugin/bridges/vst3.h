@@ -120,9 +120,12 @@ class Vst3PluginBridge : PluginBridge<Vst3Sockets<std::jthread>> {
      * instance's lifetime. This is mostly just to save some boilerplate
      * everywhere. Use C++17's structured binding as syntactic sugar to not have
      * to deal with the lock handle.
+     *
+     * @throw std::out_of_range If there's no proxy with this ID, for instance
+     *   because a callback arrived after the plugin was removed.
      */
     std::pair<Vst3PluginProxyImpl&, std::shared_lock<std::shared_mutex>>
-    get_proxy(size_t instance_id) noexcept;
+    get_proxy(size_t instance_id);
 
     /**
      * Add a `Vst3PluginProxyImpl` to the list of registered proxy objects so we

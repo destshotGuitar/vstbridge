@@ -355,7 +355,7 @@ const void* ClapPluginBridge::get_factory(const char* factory_id) {
 }
 
 std::pair<clap_plugin_proxy&, std::shared_lock<std::shared_mutex>>
-ClapPluginBridge::get_proxy(size_t instance_id) noexcept {
+ClapPluginBridge::get_proxy(size_t instance_id) {
     std::shared_lock lock(plugin_proxies_mutex_);
 
     return std::pair<clap_plugin_proxy&, std::shared_lock<std::shared_mutex>>(

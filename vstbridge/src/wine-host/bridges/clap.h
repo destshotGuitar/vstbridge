@@ -318,7 +318,7 @@ class ClapBridge : public HostBridge {
      * the lock handle.
      */
     std::pair<ClapPluginInstance&, std::shared_lock<std::shared_mutex>>
-    get_instance(size_t instance_id) noexcept;
+    get_instance(size_t instance_id);
 
     /**
      * A logger instance we'll use to log about failed

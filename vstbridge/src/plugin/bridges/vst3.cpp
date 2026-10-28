@@ -60,8 +60,10 @@ Vst3PluginBridge::Vst3PluginBridge(const ghc::filesystem::path& plugin_path)
                     const auto& [proxy_object, _] =
                         get_proxy(request.owner_instance_id);
 
-                    assert(proxy_object.unregister_context_menu(
-                        request.context_menu_id));
+                    [[maybe_unused]] const bool unregistered =
+                        proxy_object.unregister_context_menu(
+                            request.context_menu_id);
+                    assert(unregistered);
 
                     return Ack{};
                 },
@@ -148,6 +150,10 @@ Vst3PluginBridge::Vst3PluginBridge(const ghc::filesystem::path& plugin_path)
                     //      plugin.
                     Vst3PlugViewProxyImpl* plug_view =
                         proxy_object.last_created_plug_view_;
+                    if (!plug_view) {
+                        return YaComponentHandler3::CreateContextMenuResponse{
+                            .context_menu_args = std::nullopt};
+                    }
 
                     Steinberg::IPtr<Steinberg::Vst::IContextMenu> context_menu =
                         Steinberg::owned(
@@ -228,9 +234,15 @@ Vst3PluginBridge::Vst3PluginBridge(const ghc::filesystem::path& plugin_path)
                     const auto& [proxy_object, _] =
                         get_proxy(request.owner_instance_id);
 
+                    Vst3PlugViewProxyImpl* plug_view =
+                        proxy_object.last_created_plug_view_;
+                    if (!plug_view) {
+                        return Steinberg::kResultFalse;
+                    }
+
                     // REAPER requires this to be run from its provided event
                     // loop or else it will likely segfault at some point
-                    return proxy_object.last_created_plug_view_->run_gui_task(
+                    return plug_view->run_gui_task(
                         [&, &proxy_object = proxy_object]() -> tresult {
                             return proxy_object.context_menus_
                                 .at(request.context_menu_id)
@@ -322,6 +334,9 @@ Vst3PluginBridge::Vst3PluginBridge(const ghc::filesystem::path& plugin_path)
                     //      plugin.
                     Vst3PlugViewProxyImpl* plug_view =
                         proxy_object.last_created_plug_view_;
+                    if (!plug_view) {
+                        return Steinberg::kResultFalse;
+                    }
 
                     // REAPER requires this to be run from its provided event
                     // loop or else it will likely segfault at some point
@@ -450,7 +465,7 @@ Steinberg::IPluginFactory* Vst3PluginBridge::get_plugin_factory() {
 }
 
 std::pair<Vst3PluginProxyImpl&, std::shared_lock<std::shared_mutex>>
-Vst3PluginBridge::get_proxy(size_t instance_id) noexcept {
+Vst3PluginBridge::get_proxy(size_t instance_id) {
     std::shared_lock lock(plugin_proxies_mutex_);
 
     return std::pair<Vst3PluginProxyImpl&, std::shared_lock<std::shared_mutex>>(

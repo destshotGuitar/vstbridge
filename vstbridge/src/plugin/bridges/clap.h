@@ -77,7 +77,7 @@ class ClapPluginBridge : PluginBridge<ClapSockets<std::jthread>> {
      * to deal with the lock handle.
      */
     std::pair<clap_plugin_proxy&, std::shared_lock<std::shared_mutex>>
-    get_proxy(size_t instance_id) noexcept;
+    get_proxy(size_t instance_id);
 
     /**
      * Add a `clap_plugin_proxy` to the list of registered plugin proxies so we

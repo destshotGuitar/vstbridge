@@ -109,8 +109,9 @@ void RunLoopTasks::schedule(fu2::unique_function<void()> task) {
         tasks_.push_back(std::move(task));
 
         uint8_t notify_value = 1;
-        assert(write(socket_write_fd_, &notify_value, sizeof(notify_value)) ==
-               sizeof(notify_value));
+        [[maybe_unused]] const ssize_t write_result =
+            write(socket_write_fd_, &notify_value, sizeof(notify_value));
+        assert(write_result == sizeof(notify_value));
     }
 
     if (!gui_wait_contexts.empty()) {
@@ -218,6 +219,16 @@ Vst3PlugViewProxyImpl::~Vst3PlugViewProxyImpl() noexcept {
             Vst3PlugViewProxy::Destruct{.owner_instance_id = owner_instance_id()});
     } catch (const std::exception&) {
         // The Wine host is gone; the view it owned went with it.
+    }
+
+    // The plugin proxy may still try to use this view for callbacks
+    try {
+        const auto& [proxy_object, _] = bridge_.get_proxy(owner_instance_id());
+        Vst3PlugViewProxyImpl* expected = this;
+        proxy_object.last_created_plug_view_.compare_exchange_strong(expected,
+                                                                     nullptr);
+    } catch (const std::out_of_range&) {
+        // The plugin proxy has already been destroyed
     }
 }
 
