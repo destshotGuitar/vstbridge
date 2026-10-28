@@ -197,6 +197,15 @@ class Process {
         bool detached_ = false;
 
         pid_t pid_ = 0;
+
+        /**
+         * A pidfd for the process, or -1 if the kernel doesn't support them
+         * (Linux 5.3+). A host that ignores `SIGCHLD` reaps our children
+         * automatically, after which `pid_` may be reused by an unrelated
+         * process. Signalling and waiting through the pidfd can never reach
+         * that other process.
+         */
+        int pidfd_ = -1;
     };
 
     using StringResult =
