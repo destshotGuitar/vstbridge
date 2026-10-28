@@ -133,15 +133,21 @@ Steinberg::Vst::ProcessData& YaProcessData::reconstruct(
     //       `channelBuffers64` to point at that buffer as long as we do the
     //       same thing on both the native plugin side and on the Wine plugin
     //       host
-    assert(inputs_.size() <= input_pointers.size() &&
-           outputs_.size() <= output_pointers.size());
+    //
+    //       Buses the host passed on top of the plugin's own have no channels,
+    //       see `repopulate()`, and also have no place in the shared memory
+    //       object.
     for (size_t bus = 0; bus < inputs_.size(); bus++) {
         inputs_[bus].channelBuffers32 =
-            reinterpret_cast<float**>(input_pointers[bus].data());
+            bus < input_pointers.size()
+                ? reinterpret_cast<float**>(input_pointers[bus].data())
+                : nullptr;
     }
     for (size_t bus = 0; bus < outputs_.size(); bus++) {
         outputs_[bus].channelBuffers32 =
-            reinterpret_cast<float**>(output_pointers[bus].data());
+            bus < output_pointers.size()
+                ? reinterpret_cast<float**>(output_pointers[bus].data())
+                : nullptr;
     }
 
     reconstructed_process_data_.inputs = inputs_.data();
