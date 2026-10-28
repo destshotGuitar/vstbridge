@@ -145,9 +145,11 @@ struct ClapPluginInstance {
 
     /**
      * This instance's editor, if it has an open editor. Embedding here works
-     * exactly the same as how it works for VST2 plugins.
+     * exactly the same as how it works for VST2 plugins. This is a pointer
+     * because instances get moved into `ClapBridge::object_instances_`, while
+     * an `Editor` can never be moved.
      */
-    std::optional<Editor> editor;
+    std::unique_ptr<Editor> editor;
 
     /**
      * The plugin object. The plugin gets destroyed together with this struct.

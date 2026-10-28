@@ -612,9 +612,10 @@ void ClapBridge::run() {
                     [&, plugin = instance.plugin.get(),
                      gui = instance.extensions.gui,
                      &editor = instance.editor]() {
-                        Editor& editor_instance =
-                            editor.emplace(main_context_, config_,
-                                           generic_logger_, request.x11_window);
+                        editor = std::make_unique<Editor>(
+                            main_context_, config_, generic_logger_,
+                            request.x11_window);
+                        Editor& editor_instance = *editor;
 
                         const clap_window_t window{
                             .api = CLAP_WINDOW_API_WIN32,
