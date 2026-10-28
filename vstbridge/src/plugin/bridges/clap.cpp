@@ -325,6 +325,17 @@ ClapPluginBridge::~ClapPluginBridge() noexcept {
         // process has already exited (at which point we probably won't be
         // executing this, but maybe if all the stars align)
     }
+
+    // The callback handler uses the plugin proxies, which are members declared
+    // after it and would be destroyed before the handler
+    // gets joined. Terminating the host above ends the handler's loop.
+    if (host_callback_handler_.joinable()) {
+        if (host_callback_handler_.get_id() == std::this_thread::get_id()) {
+            host_callback_handler_.detach();
+        } else {
+            host_callback_handler_.join();
+        }
+    }
 }
 
 const void* ClapPluginBridge::get_factory(const char* factory_id) {

@@ -206,6 +206,17 @@ Vst2PluginBridge::~Vst2PluginBridge() noexcept {
         // process has already exited (at which point we probably won't be
         // executing this, but maybe if all the stars align)
     }
+
+    // The callback handler uses members declared after it, like the incoming
+    // MIDI events and resize requests, which would be destroyed before the
+    // handler gets joined. Terminating the host above ends the handler's loop.
+    if (host_callback_handler_.joinable()) {
+        if (host_callback_handler_.get_id() == std::this_thread::get_id()) {
+            host_callback_handler_.detach();
+        } else {
+            host_callback_handler_.join();
+        }
+    }
 }
 
 class DispatchDataConverter : public DefaultDataConverter {
