@@ -177,24 +177,37 @@ Vst2PluginBridge::Vst2PluginBridge(const ghc::filesystem::path& plugin_path,
     // call these during its initialization. Any further updates will be sent
     // over the `dispatcher()` socket. This would happen whenever the plugin
     // calls `audioMasterIOChanged()` and after the host calls `effOpen()`.
-    const auto initialization_data =
-        sockets_.host_plugin_control_.receive_single<Vst2EventResult>();
+    try {
+        const auto initialization_data =
+            sockets_.host_plugin_control_.receive_single<Vst2EventResult>();
 
-    const auto initialized_plugin =
-        std::get<AEffect>(initialization_data.payload);
-    if (!initialization_data.value_payload) {
-        throw std::runtime_error(
-            "The Wine plugin host did not report its version");
+        const auto initialized_plugin =
+            std::get<AEffect>(initialization_data.payload);
+        if (!initialization_data.value_payload) {
+            throw std::runtime_error(
+                "The Wine plugin host did not report its version");
+        }
+        const auto host_version =
+            std::get<std::string>(*initialization_data.value_payload);
+        warn_on_version_mismatch(host_version);
+
+        // After receiving the `AEffect` values we'll want to send the
+        // configuration back to complete the startup process
+        sockets_.host_plugin_control_.send(config_);
+
+        update_aeffect(plugin_, initialized_plugin);
+    } catch (...) {
+        // The callback handler has already been started at this point. If the
+        // constructor throws now then the derived destructor will not run, so
+        // close the sockets explicitly or the handler thread would block on a
+        // live Wine host forever while its `jthread` destructor joins it.
+        try {
+            plugin_host_->terminate();
+        } catch (...) {
+        }
+        io_context_.stop();
+        throw;
     }
-    const auto host_version =
-        std::get<std::string>(*initialization_data.value_payload);
-    warn_on_version_mismatch(host_version);
-
-    // After receiving the `AEffect` values we'll want to send the configuration
-    // back to complete the startup process
-    sockets_.host_plugin_control_.send(config_);
-
-    update_aeffect(plugin_, initialized_plugin);
 }
 
 Vst2PluginBridge::~Vst2PluginBridge() noexcept {
@@ -548,8 +561,58 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
     // everything except for `effClose` gets a `0`. `effEditGetRect` should
     // still point to a rectangle in case the host doesn't check the result.
     if (host_died() && opcode != effClose) [[unlikely]] {
-        if (opcode == effEditGetRect && data) {
-            *static_cast<VstRect**>(data) = &editor_rectangle_;
+        // Hosts may read output buffers even when the return value indicates
+        // that the query failed, so initialize the ones we know about instead
+        // of leaving stale stack data there.
+        switch (opcode) {
+            case effGetProgramName:
+            case effGetParamLabel:
+            case effGetParamDisplay:
+            case effGetParamName:
+            case effGetProgramNameIndexed:
+            case effGetEffectName:
+            case effGetVendorString:
+            case effGetProductString:
+            case effShellGetNextPlugin:
+                if (data) {
+                    static_cast<char*>(data)[0] = '\0';
+                }
+                break;
+            case effGetChunk:
+                if (data) {
+                    *static_cast<uint8_t**>(data) = nullptr;
+                }
+                break;
+            case effGetInputProperties:
+            case effGetOutputProperties:
+                if (data) {
+                    *static_cast<VstIOProperties*>(data) = VstIOProperties{};
+                }
+                break;
+            case effGetParameterProperties:
+                if (data) {
+                    *static_cast<VstParameterProperties*>(data) =
+                        VstParameterProperties{};
+                }
+                break;
+            case effGetMidiKeyName:
+                if (data) {
+                    // The host passes the program and key indices in this
+                    // struct. Only clear the name field, leaving those input
+                    // fields intact.
+                    constexpr size_t key_name_offset = 2 * sizeof(int32_t);
+                    constexpr size_t key_name_length = 64;
+                    std::fill_n(reinterpret_cast<char*>(data) + key_name_offset,
+                                key_name_length, '\0');
+                }
+                break;
+            case effEditGetRect:
+                if (data) {
+                    *static_cast<VstRect**>(data) = &editor_rectangle_;
+                }
+                break;
+            default:
+                break;
         }
 
         return 0;

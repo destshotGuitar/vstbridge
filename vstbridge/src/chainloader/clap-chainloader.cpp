@@ -128,24 +128,31 @@ bool clap_entry_init(const char* /*plugin_path*/) {
     // This function can be called multiple times, so we should make sure to
     // only initialize the bridge on the first call
     if (active_instances.fetch_add(1, std::memory_order_seq_cst) == 0) {
-        // On failure the count is rolled back, or the next call would report
-        // success without a bridge
-        if (!initialize_library()) {
-            active_instances.fetch_sub(1, std::memory_order_seq_cst);
-            return false;
-        }
+        try {
+            // On failure the count is rolled back, or the next call would
+            // report success without a bridge
+            if (!initialize_library()) {
+                active_instances.fetch_sub(1, std::memory_order_seq_cst);
+                return false;
+            }
 
-        // You can't change the deleter function with `.reset()` so we'll need
-        // this abomination instead
-        // XXX: The host also provides us with the plugin path which we could
-        //      just use instead. Should we? The advantage of doing it this way
-        //      instead is that we'll have consistent behavior between all
-        //      plugin formats.
-        const fs::path this_plugin_path = get_this_file_location();
-        bridge =
-            decltype(bridge)(vstbridge_module_init(this_plugin_path.c_str()),
-                             vstbridge_module_free);
-        if (!bridge) {
+            // You can't change the deleter function with `.reset()` so we'll
+            // need this abomination instead
+            // XXX: The host also provides us with the plugin path which we
+            //      could just use instead. Should we? The advantage of doing it
+            //      this way instead is that we'll have consistent behavior
+            //      between all plugin formats.
+            const fs::path this_plugin_path = get_this_file_location();
+            bridge =
+                decltype(bridge)(vstbridge_module_init(this_plugin_path.c_str()),
+                                 vstbridge_module_free);
+            if (!bridge) {
+                active_instances.fetch_sub(1, std::memory_order_seq_cst);
+                return false;
+            }
+        } catch (...) {
+            // Do not let an exception escape the C entry point, and roll back
+            // the instance count as well.
             active_instances.fetch_sub(1, std::memory_order_seq_cst);
             return false;
         }
@@ -170,7 +177,11 @@ const void* clap_entry_get_factory(const char* factory_id) {
         return nullptr;
     }
 
-    return vstbridge_module_get_factory(bridge.get(), factory_id);
+    try {
+        return vstbridge_module_get_factory(bridge.get(), factory_id);
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 // This visibility attribute doesn't do anything on data with external linkage,
@@ -194,9 +205,13 @@ CLAP_EXPORT const clap_plugin_entry_t clap_entry = {
  * rebuilt on every git commit in development.
  */
 extern "C" VSTBRIDGE_EXPORT const char* vstbridge_version() {
-    if (!initialize_library() || !remote_vstbridge_version) {
+    try {
+        if (!initialize_library() || !remote_vstbridge_version) {
+            return nullptr;
+        }
+
+        return remote_vstbridge_version();
+    } catch (...) {
         return nullptr;
     }
-
-    return remote_vstbridge_version();
 }

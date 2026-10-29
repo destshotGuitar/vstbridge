@@ -83,8 +83,9 @@ bool clap_entry_init(const char* /*plugin_path*/) {
         //      just use instead. Should we? The advantage of doing it this way
         //      instead is that we'll have consistent behavior between all
         //      plugin formats.
-        const fs::path plugin_path = get_this_file_location();
+        fs::path plugin_path;
         try {
+            plugin_path = get_this_file_location();
             bridge = std::make_unique<ClapPluginBridge>(plugin_path);
 
             return true;

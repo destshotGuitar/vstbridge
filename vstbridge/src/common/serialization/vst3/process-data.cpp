@@ -16,6 +16,8 @@
 
 #include "process-data.h"
 
+#include <algorithm>
+
 #include "../../utils.h"
 
 YaProcessData::YaProcessData() noexcept {}
@@ -33,8 +35,9 @@ void YaProcessData::repopulate(const Steinberg::Vst::ProcessData& process_data,
     // The actual audio is stored in an accompanying `AudioShmBuffer` object, so
     // these inputs and outputs objects are only used to serialize metadata
     // about the input and output audio bus buffers
-    inputs_.resize(process_data.numInputs);
-    for (int bus = 0; bus < process_data.numInputs; bus++) {
+    const int32 num_inputs = std::max(0, process_data.numInputs);
+    inputs_.resize(static_cast<size_t>(num_inputs));
+    for (int bus = 0; bus < num_inputs; bus++) {
         // NOTE: The host might provide more input channels than what the plugin
         //       asked for. Carla does this for some reason. We should just
         //       ignore these.
@@ -60,8 +63,9 @@ void YaProcessData::repopulate(const Steinberg::Vst::ProcessData& process_data,
         }
     }
 
-    outputs_.resize(process_data.numOutputs);
-    for (int bus = 0; bus < process_data.numOutputs; bus++) {
+    const int32 num_outputs = std::max(0, process_data.numOutputs);
+    outputs_.resize(static_cast<size_t>(num_outputs));
+    for (int bus = 0; bus < num_outputs; bus++) {
         // NOTE: The host might provide more output channels than what the
         //       plugin asked for. Carla does this for some reason. We should
         //       just ignore these.
@@ -206,8 +210,12 @@ YaProcessData::Response& YaProcessData::create_response() noexcept {
 void YaProcessData::write_back_outputs(
     Steinberg::Vst::ProcessData& process_data,
     const AudioShmBuffer& shared_audio_buffers) {
-    assert(static_cast<int32>(outputs_.size()) == process_data.numOutputs);
-    for (int bus = 0; bus < process_data.numOutputs; bus++) {
+    // `repopulate()` already clamps negative counts, so do the same here to
+    // avoid indexing past `outputs_` for a host that reports an invalid
+    // output count.
+    const int32 num_outputs = std::clamp(process_data.numOutputs, 0,
+                                         static_cast<int32>(outputs_.size()));
+    for (int bus = 0; bus < num_outputs; bus++) {
         process_data.outputs[bus].silenceFlags = outputs_[bus].silenceFlags;
 
         // NOTE: Some hosts, like Carla, provide more output channels than what

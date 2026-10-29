@@ -479,8 +479,14 @@ Steinberg::IPluginFactory* Vst3PluginBridge::get_plugin_factory() {
             return nullptr;
         }
 
-        plugin_factory_ = Steinberg::owned(
-            new Vst3PluginFactoryProxyImpl(*this, std::move(*factory_args)));
+        try {
+            plugin_factory_ = Steinberg::owned(new Vst3PluginFactoryProxyImpl(
+                *this, std::move(*factory_args)));
+        } catch (const std::exception& error) {
+            generic_logger_.log("Failed to create the plugin factory proxy: " +
+                                std::string(error.what()));
+            return nullptr;
+        }
     }
 
     // Because we're returning a raw pointer, we have to increase the reference
@@ -509,15 +515,29 @@ void Vst3PluginBridge::register_plugin_proxy(
     // be run in the audio processing loop
     if (proxy_object.YaAudioProcessor::supported() ||
         proxy_object.YaComponent::supported()) {
-        // The Wine host may have died since it created the object. The proxy's
-        // constructor then throws, so it must not stay behind in this map.
-        if (!with_live_host([&]() {
-                sockets_.add_audio_processor_and_connect(
-                    proxy_object.instance_id());
-            })) {
+        const auto remove_proxy = [&]() {
             sockets_.remove_audio_processor(proxy_object.instance_id());
             plugin_proxies_.erase(proxy_object.instance_id());
+        };
 
+        // The Wine host may have died since it created the object. The proxy's
+        // constructor then throws, so it must not stay behind in this map.
+        bool connected = false;
+        try {
+            connected = with_live_host([&]() {
+                sockets_.add_audio_processor_and_connect(
+                    proxy_object.instance_id());
+            });
+        } catch (...) {
+            // `with_live_host()` only handles connection errors. Be sure to
+            // remove the map entry for other errors as well, or a later
+            // callback would dereference a destroyed proxy.
+            remove_proxy();
+            throw;
+        }
+
+        if (!connected) {
+            remove_proxy();
             throw std::runtime_error("The Wine plugin host is gone");
         }
     }

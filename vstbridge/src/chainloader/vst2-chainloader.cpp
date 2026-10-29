@@ -109,12 +109,17 @@ extern "C" VSTBRIDGE_EXPORT AEffect* VSTPluginMain(
     audioMasterCallback host_callback) {
     assert(host_callback);
 
-    if (!initialize_library()) {
+    try {
+        if (!initialize_library()) {
+            return nullptr;
+        }
+
+        const fs::path this_plugin_path = get_this_file_location();
+        return vstbridge_plugin_init(host_callback, this_plugin_path.c_str());
+    } catch (...) {
+        // This is a C entry point, so an exception must not escape here.
         return nullptr;
     }
-
-    const fs::path this_plugin_path = get_this_file_location();
-    return vstbridge_plugin_init(host_callback, this_plugin_path.c_str());
 }
 
 // XXX: GCC doens't seem to have a clean way to let you define an arbitrary
@@ -133,9 +138,13 @@ VSTBRIDGE_EXPORT AEffect* deprecated_main(audioMasterCallback audioMaster) {
  * rebuilt on every git commit in development.
  */
 extern "C" VSTBRIDGE_EXPORT const char* vstbridge_version() {
-    if (!initialize_library() || !remote_vstbridge_version) {
+    try {
+        if (!initialize_library() || !remote_vstbridge_version) {
+            return nullptr;
+        }
+
+        return remote_vstbridge_version();
+    } catch (...) {
         return nullptr;
     }
-
-    return remote_vstbridge_version();
 }

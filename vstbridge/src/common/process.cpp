@@ -509,6 +509,11 @@ Process::HandleResult Process::spawn_child_piped(
         return std::error_code(result, std::system_category());
     }
 
+    // Open the pidfd while we know the PID still belongs to our child.
+    // `waitpid(WNOHANG)` below may reap the child, after which the PID can be
+    // reused and `pidfd_open()` could target an unrelated process.
+    Process::Handle child(child_pid);
+
     // With glibc `posix_spawn*()` will return 2/`ENOENT` when the file does not
     // exist, but the specification says that it should return a PID that exits
     // with status 127 instead. I have no idea how we'd check for that without
@@ -516,9 +521,12 @@ Process::HandleResult Process::spawn_child_piped(
     int status = 0;
     assert(waitpid(child_pid, &status, WNOHANG) >= 0);
     if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+        // The child has already been reaped above, so there is nothing left to
+        // terminate or wait for.
+        child.detach();
         return Process::CommandNotFound{};
     } else {
-        return Handle(child_pid);
+        return child;
     }
 }
 #endif  // WITHOUT_ASIO
@@ -554,12 +562,19 @@ Process::HandleResult Process::spawn_child_redirected(
         return std::error_code(result, std::system_category());
     }
 
+    // Open the pidfd before `waitpid(WNOHANG)` can reap the child and its PID
+    // can be reused.
+    Process::Handle child(child_pid);
+
+    // This fails with `ECHILD` if the host ignores `SIGCHLD` and the child
+    // already exited, in which case we can't check the exit status
     int status = 0;
     assert(waitpid(child_pid, &status, WNOHANG) >= 0);
     if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+        child.detach();
         return Process::CommandNotFound{};
     } else {
-        return Handle(child_pid);
+        return child;
     }
 }
 

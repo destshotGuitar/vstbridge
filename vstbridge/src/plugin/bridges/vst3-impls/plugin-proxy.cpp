@@ -429,7 +429,10 @@ Vst3PluginProxyImpl::getBusInfo(Steinberg::Vst::MediaType type,
 
     bus = response.bus;
 
-    {
+    // Don't cache failed queries: a cache hit always reports `kResultOk`, so
+    // caching the zeroed default response would make the host believe the bus
+    // exists with zero channels.
+    if (response.result == Steinberg::kResultOk) {
         std::lock_guard lock(processing_bus_cache_mutex_);
         if (processing_bus_cache_) {
             processing_bus_cache_->bus_info[args] = response.bus;

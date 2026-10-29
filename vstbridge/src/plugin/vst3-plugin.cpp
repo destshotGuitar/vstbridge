@@ -95,8 +95,9 @@ void log_init_error(const std::exception& error, const fs::path& plugin_path) {
 bool InitModule() {
     assert(!bridge);
 
-    const fs::path plugin_path = get_this_file_location();
+    fs::path plugin_path;
     try {
+        plugin_path = get_this_file_location();
         bridge = std::make_unique<Vst3PluginBridge>(plugin_path);
 
         return true;

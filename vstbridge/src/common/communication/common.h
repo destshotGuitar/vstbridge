@@ -35,6 +35,7 @@
 
 #include "../bitsery/traits/small-vector.h"
 #include "../logging/common.h"
+#include "../serialization/common.h"
 #include "../utils.h"
 #include "ipc.h"
 
@@ -1155,6 +1156,16 @@ class TypedMessageHandler : public AdHocSocketHandler<Thread> {
                             } catch (const std::system_error&) {
                                 throw;
                             } catch (const std::exception& error) {
+                                // Some responses can only be serialized when
+                                // they refer to the request's actual output
+                                // data, or a default response would otherwise
+                                // look like a successful one. Propagate the
+                                // error instead of corrupting the protocol.
+                                if constexpr (!is_safe_default_response<
+                                                  T>::value) {
+                                    throw;
+                                }
+
                                 if (logging) {
                                     logging->first.logger_.log(
                                         "Failed to handle a request, sending "
