@@ -83,6 +83,19 @@ HostBridge::HostBridge(MainContext& main_context,
 void HostBridge::handle_events() noexcept {
     MSG msg;
 
+    // Wine checks hardware input before timers when looking for messages, so
+    // under continuous mouse input plugin timers (10/16 ms) fire at half rate
+    // and the editor stops animating smoothly. Peek timers separately first:
+    // with a WM_TIMER-only range the server skips the input queue and hands
+    // out expired timers even while mouse messages are pending.
+    for (int i = 0;
+         i < max_win32_messages &&
+         PeekMessage(&msg, nullptr, WM_TIMER, WM_TIMER, PM_REMOVE);
+         i++) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
     // Coalesce mouse moves to at most one per ~16 ms. Serum 2 skips expensive
     // wavetable redraws when moves arrive faster than it can render (observed
     // above ~60 Hz), while Windows normally coalesces mouse moves in the
