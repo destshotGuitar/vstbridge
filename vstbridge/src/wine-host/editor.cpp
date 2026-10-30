@@ -400,6 +400,16 @@ Editor::Editor(MainContext& main_context,
                          .count())),
       idle_timer_proc_([this, timer_proc = std::move(timer_proc)]() mutable {
           handle_x11_events();
+          // Plugins that only repaint when explicitly asked (FabFilter) draw
+          // their editor once, possibly before they know the final window size
+          // and content scale, and then never repaint by themselves, leaving
+          // part of the window black. Ask for a couple of repaints right after
+          // the editor has been shown or resized.
+          if (pending_redraws_ > 0) {
+              pending_redraws_--;
+              RedrawWindow(win32_window_.handle_, nullptr, nullptr,
+                           RDW_INVALIDATE | RDW_ALLCHILDREN);
+          }
           if (timer_proc) {
               (*timer_proc)();
           }
@@ -505,6 +515,11 @@ void Editor::resize(uint16_t width, uint16_t height) {
     wrapper_window_size_.width = width;
     wrapper_window_size_.height = height;
 
+    // The window may have been resized before the plugin finished painting its
+    // editor, in which case the plugin can be left with a stale picture. Ask it
+    // to repaint on the next few idle timer ticks. See `pending_redraws_`.
+    pending_redraws_ = 4;
+
     // When the `editor_coordinate_hack` option is enabled, we will make sure
     // that the window is actually placed at (0, 0) coordinates. Otherwise some
     // plugins that rely on screen coordinates, like the Soundtoys plugins and
@@ -536,6 +551,10 @@ void Editor::resize(uint16_t width, uint16_t height) {
 
 void Editor::show() noexcept {
     ShowWindow(win32_window_.handle_, SW_SHOWNORMAL);
+
+    // Make sure the plugin paints its editor at the final window size instead
+    // of the size it had while attaching. See `pending_redraws_`.
+    pending_redraws_ = 4;
 }
 
 void Editor::handle_x11_events() noexcept {
