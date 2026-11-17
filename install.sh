@@ -75,11 +75,64 @@ for f in \
     vstbridge-host.exe vstbridge-host.exe.so \
     vstbridge-host-32.exe vstbridge-host-32.exe.so \
     vstbridge-host-32-unixlib.so vstbridge-host-32-unixlib-i386.so \
-    vstbridgectl vstbridgectl-gtk
+    vstbridgectl vstbridgectl-gtk vstbridge-watch.py
 do
     [ -f "$SRC_DIR/$f" ] && cp "$SRC_DIR/$f" "$INSTALL_DIR/$f"
 done
-chmod +x "$INSTALL_DIR/vstbridgectl" 2>/dev/null || true
+chmod +x "$INSTALL_DIR/vstbridgectl" "$INSTALL_DIR/vstbridge-watch.py" 2>/dev/null || true
+
+# --- systemd user units: sync on login + live watcher ------------------------
+
+if [ "${VSTBRIDGE_SYSTEMD:-1}" != "0" ] && command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user >/dev/null 2>&1; then
+    UNIT_DIR="$HOME/.config/systemd/user"
+    mkdir -p "$UNIT_DIR"
+
+    cat > "$UNIT_DIR/vstbridge-sync.service" <<EOF
+[Unit]
+Description=Sync vstbridge plugin bridges
+
+[Service]
+Type=oneshot
+ExecStart=$INSTALL_DIR/vstbridgectl sync
+EOF
+
+    cat > "$UNIT_DIR/vstbridge-sync.timer" <<EOF
+[Unit]
+Description=Sync vstbridge plugin bridges once after login
+
+[Timer]
+OnBootSec=45s
+Unit=vstbridge-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    cat > "$UNIT_DIR/vstbridge-watch.service" <<EOF
+[Unit]
+Description=Watch plugin directories and auto-sync vstbridge
+
+[Service]
+ExecStart=/usr/bin/env python3 $INSTALL_DIR/vstbridge-watch.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now vstbridge-watch.service 2>/dev/null \
+        && log "Enabled the plugin directory watcher (vstbridge-watch.service)" \
+        || warn "Could not start vstbridge-watch.service"
+    systemctl --user enable --now vstbridge-sync.timer 2>/dev/null \
+        && log "Enabled the login-time sync timer (vstbridge-sync.timer)" \
+        || warn "Could not start vstbridge-sync.timer"
+elif [ "${VSTBRIDGE_SYSTEMD:-1}" != "0" ]; then
+    warn "systemd user session not available; skipping auto-sync services."
+    warn "Run 'vstbridgectl sync' manually after installing new plugins."
+fi
 
 # --- Sanity checks -----------------------------------------------------------
 
