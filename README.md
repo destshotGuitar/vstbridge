@@ -72,7 +72,7 @@ editor_popup_fix = true
 - **vstbridge-watch.service** — watcher (inotify) на директории из конфигурации vstbridgectl. Установили плагин через wine-инсталлятор — через ~8 секунд после окончания копирования `vstbridgectl sync` запустится сам. Новые директории в конфиге подхватываются без перезапуска.
 - **vstbridge-sync.timer** — разово при входе в сессию на случай, если watcher пропустил изменения.
 
-DAW при этом сама должна пересканировать плагины: REAPER делает это при старте (и по кнопке «Re-scan»). Логи: `journalctl --user -u vstbridge-watch -f`.
+DAW при этом сама должна пересканировать плагины — watcher может только создать/обновить мосты в `~/.vst3/vstbridge/` и остальных выходных папках, а заставить DAW перечитать их изнутри нельзя. REAPER пересканирует сам при старте (либо кнопка «Re-scan» в Preferences → Plug-ins). Практический вывод: поставили плагин → дождитесь записи «sync finished» в логе (≈10 секунд) → откройте/перезапустите DAW. Логи: `journalctl --user -u vstbridge-watch -f`.
 
 ## Сборка из исходников
 
@@ -167,7 +167,7 @@ editor_popup_fix = true
 - **vstbridge-watch.service** — an inotify watcher on the directories registered in vstbridgectl's config. Install a plugin through a Wine installer, and `vstbridgectl sync` runs by itself about 8 seconds after the copying settles. Directories added to the config later are picked up without a restart.
 - **vstbridge-sync.timer** — once at login, in case the watcher missed anything.
 
-Your DAW still needs to rescan its plugin paths for new plugins to show up (REAPER does this on startup). Logs: `journalctl --user -u vstbridge-watch -f`.
+Your DAW still needs to rescan its plugin paths for new plugins to show up — the watcher can only create/update the bridges in `~/.vst3/vstbridge/` and the other output folders; it cannot make the DAW reload them from the inside. REAPER rescans on startup (or via Preferences → Plug-ins → «Re-scan»). So the practical flow is: install the plugin, wait for the «sync finished» log entry (about 10 seconds), then open or restart your DAW. Logs: `journalctl --user -u vstbridge-watch -f`.
 
 ## Building from source
 
