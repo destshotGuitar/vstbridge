@@ -74,6 +74,19 @@ editor_popup_fix = true
 
 DAW при этом сама должна пересканировать плагины — watcher может только создать/обновить мосты в `~/.vst3/vstbridge/` и остальных выходных папках, а заставить DAW перечитать их изнутри нельзя. REAPER пересканирует сам при старте (либо кнопка «Re-scan» в Preferences → Plug-ins). Практический вывод: поставили плагин → дождитесь записи «sync finished» в логе (≈10 секунд) → откройте/перезапустите DAW. Логи: `journalctl --user -u vstbridge-watch -f`.
 
+## Лимиты памяти и realtime (предупреждение «Low memory locking limit»)
+
+Если при открытии плагинов вылезает уведомление про низкий лимит памяти (memlock), у пользователя не настроены audio-лимиты — общие аудиобуферы моста не могут быть запинены в ОЗУ (работает чуть медленнее). Лечится одной командой и перелогином:
+
+```bash
+sudo tee /etc/security/limits.d/99-audio-rt.conf >/dev/null <<EOF
+$USER - memlock unlimited
+$USER - rtprio 95
+EOF
+```
+
+Проверка после перелогина: `ulimit -l` должен вывести `unlimited`. Начиная с v5.2.2 это предупреждение показывается один раз за сессию, а не по уведомлению на каждый плагин.
+
 ## Сборка из исходников
 
 ```bash
@@ -168,6 +181,19 @@ editor_popup_fix = true
 - **vstbridge-sync.timer** — once at login, in case the watcher missed anything.
 
 Your DAW still needs to rescan its plugin paths for new plugins to show up — the watcher can only create/update the bridges in `~/.vst3/vstbridge/` and the other output folders; it cannot make the DAW reload them from the inside. REAPER rescans on startup (or via Preferences → Plug-ins → «Re-scan»). So the practical flow is: install the plugin, wait for the «sync finished» log entry (about 10 seconds), then open or restart your DAW. Logs: `journalctl --user -u vstbridge-watch -f`.
+
+## Memory locking and realtime limits (the "Low memory locking limit" warning)
+
+If you get a notification about a low memory locking limit when opening plugins, your user is missing the standard audio limits, and the bridge's shared audio buffers cannot be pinned in RAM (slightly worse performance). Fix it with one command and a re-login:
+
+```bash
+sudo tee /etc/security/limits.d/99-audio-rt.conf >/dev/null <<EOF
+$USER - memlock unlimited
+$USER - rtprio 95
+EOF
+```
+
+After re-logging in, `ulimit -l` should print `unlimited`. Since v5.2.2 the warning itself is shown once per session instead of one notification per plugin.
 
 ## Building from source
 

@@ -16,6 +16,7 @@
 
 #include "audio-shm.h"
 
+#include <atomic>
 #include <cstring>
 #include <iostream>
 
@@ -38,6 +39,13 @@ static constexpr size_t audio_shm_padding_bytes = 4096;
 namespace {
 
 void log_memlock_warning() {
+    // Every plugin instance that fails to lock its shared memory would print
+    // this otherwise. Once per process is enough.
+    static std::atomic_bool shown{false};
+    if (shown.exchange(true)) {
+        return;
+    }
+
     Logger logger = Logger::create_exception_logger();
 
     logger.log("");

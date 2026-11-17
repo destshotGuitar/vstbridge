@@ -1,7 +1,7 @@
 project(
   'vstbridge',
   'cpp',
-  version : '5.2.1',
+  version : '5.2.2',
   meson_version : '>=0.56',
   default_options : [
     'warning_level=3',

@@ -252,18 +252,24 @@ class PluginBridge {
                     init_msg << "   on how to do that." << std::endl;
                     init_msg << std::endl;
 
-                    send_notification(
-                        "Low RTTIME limit detected",
-                        "RLIMIT_RTTIME is set to " +
-                            std::to_string(*rttime_limit) +
-                            " us. This can happen when using PipeWire's JACK "
-                            "backend with RTKit instead of regular realtime "
-                            "scheduling. Some plugins may crash during "
-                            "initialization because of this, so it's "
+                    // Show the desktop notification only once per plugin
+                    // format per process. Every plugin instance would
+                    // otherwise pop its own notification on startup.
+                    static std::atomic_bool rttime_notification_shown{false};
+                    if (!rttime_notification_shown.exchange(true)) {
+                        send_notification(
+                            "Low RTTIME limit detected",
+                            "RLIMIT_RTTIME is set to " +
+                                std::to_string(*rttime_limit) +
+                                " us. This can happen when using PipeWire's JACK "
+                                "backend with RTKit instead of regular realtime "
+                                "scheduling. Some plugins may crash during "
+                                "initialization because of this, so it's "
                             "recommended to set up proper realtime privileges "
                             "for your user. Check the readme for "
                             "instructions on how to do that.",
                         std::nullopt);
+                    }
                 } else {
                     init_msg << "'yes'" << std::endl;
                 }
@@ -297,15 +303,21 @@ class PluginBridge {
                          << std::endl;
                 init_msg << std::endl;
 
-                send_notification(
-                    "Low memory locking limit detected",
-                    "The current memlock limit is set to " +
-                        std::to_string(*memlock_limit) +
-                        " bytes. This means that you have not yet set up "
-                        "realtime privileges for your user, and performance "
-                        "may be degraded until you fix this. Check the readme "
-                        "for instructions on how to do that.",
-                    std::nullopt);
+                // Once per plugin format per process; opening a handful of
+                // plugins at once would otherwise spam one notification per
+                // plugin instance.
+                static std::atomic_bool memlock_notification_shown{false};
+                if (!memlock_notification_shown.exchange(true)) {
+                    send_notification(
+                        "Low memory locking limit detected",
+                        "The current memlock limit is set to " +
+                            std::to_string(*memlock_limit) +
+                            " bytes. This means that you have not yet set up "
+                            "realtime privileges for your user, and performance "
+                            "may be degraded until you fix this. Check the readme "
+                            "for instructions on how to do that.",
+                        std::nullopt);
+                }
             }
         } else {
             init_msg
