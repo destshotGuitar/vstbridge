@@ -23,3 +23,6 @@ vstbridge/subprojects/*/
 # vstbridgectl fetched header-only dependencies
 vstbridge/tools/vstbridgectl/deps/
 vstbridge/tools/vstbridgectl/build/
+
+__pycache__/
+*.pyc
