@@ -1,340 +1,168 @@
-# vstbridge
+# vstbridge destshot stable
 
-vstbridge is a fork of [yabridge](https://github.com/robbert-vdh/yabridge) by Robbert van der Helm — a Wine-based bridge that allows Linux DAWs to load Windows VST®2, VST3, and CLAP plugins as if they were native plugins.
+**vstbridge** — это форк [yabridge](https://github.com/robbert-vdh/yabridge) от [rations](https://github.com/rations/vstbridge), а этот репозиторий — стабильная сборка 2026 года: все исправления vstbridge 0.0.5 плюс вручную перенесённые PR-ы из yabridge, которые так и не были влиты в апстрим. Позволяет запускать Windows VST2, VST3 и CLAP плагины в Linux DAW (REAPER, Ardour, Bitwig и др.) через Wine.
 
-Yabridge is an excellent project and this fork would not exist without it. All credit for the core bridging architecture, the IPC design, the chainloader system, and the VST3/CLAP compatibility work belongs to Robbert and the yabridge contributors. If you are on a distro with yabridge packages (Arch, Manjaro, etc.) and do not need the fixes below, use upstream yabridge.
+Репозиторий: <https://github.com/destshotGuitar/vstbridge> · [English below](#english)
 
 ---
 
-## What vstbridge adds
+## Почему этот форк
 
-### Wine ≥ 9.21 plugin GUI fix
+Оригинальный yabridge давно без релизов, а Wine 10+ сломал в нём ряд вещей. vstbridge исправил ввод мыши и добавил фикс меню, но тоже развивается медленно. Здесь собрано всё, что сообщество сделало к ноябрю 2026-го, в одну проверенную на REAPER + GNOME (Wayland) сборку:
 
-Upstream yabridge 5.1.1 breaks with Wine ≥ 9.21: plugins render their GUI but are completely non-interactive. Knobs, buttons, and sliders do not respond to mouse input at all.
+| Проблема | Источник фикса |
+|---|---|
+| Меню JUCE-плагинов (Superior Drummer 3, EZdrummer 3, Hofa) открываются и сразу закрываются на Wine 10+; нужна была эмуляция виртуального стола в winecfg | Патч singularity098 (yabridge#521), в vstbridge — опция `editor_popup_fix` |
+| GUI плагина не реагирует на мышь с Wine ≥ 9.21 (координаты уезжают из-за `wm_state_serial`) | Фикс rations (XEmbed + `SetWindowPos`), включён по умолчанию |
+| REAPER подвисает, пока открыто меню или диалог плагина (модальный цикл) | yabridge#538 (zx2c4) |
+| Падение Wine-хоста уносит за собой весь DAW | Серия yabridge#534 (Yagafgaf, 21 коммит): `with_live_host`, pidfd, try/catch на всех C-входах |
+| Краш `BadWindow` при закрытии окна плагина | yabridge#531 (zx2c4) |
+| Чёрная/непрорисованная область GUI у FabFilter и подобных | yabridge#533 (repaint после show/resize) |
+| Дедлок `beginEdit` в Bitwig, прочие дедлоки и падения | yabridge#505, y#513, y#537-класс |
+| Мышь «протухает» после переноса окна плагина | rations/vstbridge#26 |
+| Дропауты от per-block gain reduction query в REAPER | yabridge#527 |
+| Мелочь: SIGCHLD, STDIN Wine-хоста, приоритет SCHED_FIFO, коалесцинг мыши | yabridge#528, #529, #509, #532 |
 
-**Root cause:** When a plugin window is embedded via XEmbed, Wine's `make_window_embedded()` sets an internal `wm_state_serial` field and waits for a `WM_STATE` PropertyNotify from the window manager. For embedded (non-root) windows the window manager never sees the window, so `wm_state_serial` is never cleared. This permanently blocks `window_update_client_config` — the function that updates the Win32 HWND's screen position. The HWND stays at `{0, 0, w, h}` instead of its true screen position `{abs_x, abs_y, abs_x+w, abs_y+h}`. When the user clicks at `(abs_x+dx, abs_y+dy)`, Wine translates it to client coordinates relative to `(0, 0)`, producing `(abs_x+dx, abs_y+dy)` — coordinates outside the plugin window — so the click is discarded.
+Полный список — в истории коммитов ветки `master` (32 коммита поверх vstbridge 0.0.5).
 
-**The fix** (`src/wine-host/editor.cpp`): In XEmbed mode, `fix_local_coordinates()` calls `SetWindowPos()` directly instead of sending a `ConfigureNotify` event. `SetWindowPos()` updates the Win32 HWND rect without going through the `wm_state_serial`-gated path. Wine's embedded-window guard in `window_set_config` then prevents the actual X11 window from being moved visually, so the window stays correctly positioned on screen. Mouse coordinates are translated correctly and input works.
+## Требования
 
-XEmbed is also enabled by default in this fork (`editor_xembed = true` in `src/common/configuration.h`).
+- **Wine Staging 10+ или 11** (проверено на 11.20)
+- 64-битный Linux DAW (REAPER, Ardour, Bitwig, Renoise…)
+- GNOME / KDE / X11 / Wayland (XWayland)
+- Для GUI многих плагинов нужен DXVK: `winetricks dxvk` в нужном префиксе
 
-For the full technical analysis see [readme-fixes.md](https://github.com/rations/vstbridge/blob/master/readme-fixes.md).
+## Быстрая установка
 
-### GTK3 GUI for vstbridgectl
+Одна команда — скачает последний релиз, установит в `~/.local/share/vstbridge` (старая установка будет сохранена как бэкап):
 
-The upstream yabridgectl management tool is command-line only. vstbridge adds a GTK3 graphical interface (`vstbridgectl-gtk`) for users who prefer not to use the terminal.
-
-The GUI has these tabs:
-
-- **Directories** — add and remove the directories vstbridge scans for Windows plugins
-- **Sync** — run a sync with options for force, prune, verbose output, and skipping the compatibility check; live output is shown in the window
-- **Status** — show the current vstbridge installation status and detected Wine version
-- **Settings** — set the vstbridge installation path, choose between centralized and inline VST2 install modes, and toggle the Wine/vstbridge compatibility check
-- **Blacklist** — exclude paths from the plugin scan
-- **Plugins** — change per-plugin settings, such as Wine DLL overrides and editor options, without editing `vstbridge.toml` by hand
-
-The Plugins tab also has **Fix popup menus that close immediately**, for JUCE plugins such as Superior Drummer 3, EZdrummer 3 and Hofa whose menus open and close again with Wine 10 and later. It's off by default and only needed for plugins with that problem (`editor_popup_fix = true` in `vstbridge.toml`). Root cause analysis and the original patch by singularity098.
-
-### Per-plugin Wine environment
-
-yabridge starts every plugin's Wine host with the same environment, so all plugins in a prefix share the same Wine settings. Plugins from different vendors don't always agree: one may need DXVK's `d3d11` and `dxgi` while another only draws with Wine's built-in versions. Until now the only way around that was a separate Wine prefix for each set of plugins.
-
-vstbridge adds an `environment` option to `vstbridge.toml`. It sets extra environment variables for one plugin's Wine host process, such as its own `WINEDLLOVERRIDES`, so plugins with different needs can share one prefix. Set it in vstbridgectl's Plugins tab (one `KEY=VALUE` per line under **Wine environment variables**) or in `vstbridge.toml`:
-
-```toml
-["SSL Native*.vst3"]
-environment = ["WINEDLLOVERRIDES=d3d11,dxgi=n,b"]
+```bash
+curl -fsSL https://raw.githubusercontent.com/destshotGuitar/vstbridge/master/install.sh | bash
 ```
 
-The variables are listed in the plugin's startup log, and changes apply the next time the plugin is loaded. The settings are per plugin, not per instance, and in a plugin group the plugin that starts the group decides the environment. See [Configuration](#configuration) for the details.
+Затем добавьте папки с Windows-плагинами и синхронизируйте:
+
+```bash
+export PATH="$HOME/.local/share/vstbridge:$PATH"
+vstbridgectl add "$HOME/.wine/drive_c/Program Files/Common Files/VST3"
+vstbridgectl sync
+```
+
+и укажите DAW на выходные папки:
+
+- VST3: `~/.vst3/vstbridge/`
+- VST2: `~/.vst/vstbridge/`
+- CLAP: `~/.clap/vstbridge/`
+
+### Фикс «пропадающих» меню
+
+Для JUCE-плагинов с меню (Toontrack, Hofa и др.) включите опцию — либо через GUI (`vstbridgectl-gtk`, вкладка Plugins → «Fix popup menus»), либо вручную в `~/.vst3/vstbridge/vstbridge.toml` (и аналогах для VST2/CLAP):
+
+```toml
+["EZdrummer 3.vst3"]
+editor_popup_fix = true
+```
+
+После этого меню работают **без эмуляции виртуального стола в winecfg**.
+
+## Сборка из исходников
+
+```bash
+git clone https://github.com/destshotGuitar/vstbridge.git
+cd vstbridge
+sudo dnf install wine-devel libxcb-devel   # Fedora; в README vstbridge есть список для Debian/Ubuntu
+sudo ln -sf /usr/bin/winegcc /usr/local/bin/winegcc-stable
+sudo ln -sf /usr/bin/wineg++ /usr/local/bin/wineg++-stable
+meson setup vstbridge/build --buildtype=release --cross-file=vstbridge/cross-wine.conf
+ninja -C vstbridge/build
+make -C vstbridge/tools/vstbridgectl
+```
+
+## Откат
+
+```bash
+rm -rf ~/.local/share/vstbridge
+mv ~/.local/share/vstbridge.bak-* ~/.local/share/vstbridge
+vstbridgectl sync --force
+```
+
+## Благодарности
+
+- [Robbert van der Helm](https://github.com/robbert-vdh) — автор yabridge
+- [rations](https://github.com/rations) — автор vstbridge
+- [singularity098](https://github.com/robbert-vdh/yabridge/issues/521) — анализ и патч от JUCE-меню
+- [zx2c4](https://github.com/zx2c4), [Yagafgaf](https://github.com/Yagafgaf) и другие авторы перенесённых PR
+
+Лицензия: GPL-3.0 (как у yabridge).
 
 ---
+
+# <a name="english"></a>English
+
+**vstbridge destshot stable** is a community stable build for 2026: everything from vstbridge 0.0.5 plus stability and bug-fix pull requests from yabridge that were never merged upstream. It runs Windows VST2, VST3 and CLAP plugins in Linux DAWs through Wine.
+
+## Why this fork
+
+Upstream yabridge has had no releases for a long time, and Wine 10+ broke several things in it. vstbridge fixed mouse input and added a menu fix but also moves slowly. This repo combines everything the community had produced by November 2026 into one build, tested on REAPER + GNOME (Wayland):
+
+- JUCE popup menus (Superior Drummer 3, EZdrummer 3, Hofa) closing instantly on Wine 10+ — fixed by singularity098's patch (yabridge#521), exposed as vstbridge's `editor_popup_fix` option; **no virtual desktop emulation in winecfg needed**
+- Dead mouse input with Wine ≥ 9.21 — rations' XEmbed + `SetWindowPos` fix, on by default
+- REAPER stalls while a plugin menu/dialog is open — yabridge#538 (zx2c4)
+- A crashed Wine host taking the whole DAW down — the 21-commit yabridge#534 series (Yagafgaf)
+- `BadWindow` crash when closing plugin editors — yabridge#531
+- Black/unpainted GUI areas in FabFilter-style plugins — yabridge#533
+- `beginEdit` deadlock (Bitwig) and assorted crashes — yabridge#505, #513
+- Stale mouse coordinates after moving the editor — rations/vstbridge#26
+- REAPER per-block gain reduction query dropouts — yabridge#527
+
+Full list in the `master` commit history (32 commits on top of vstbridge 0.0.5).
 
 ## Requirements
 
-- Wine Staging. This fork is tested with Wine Staging 11.20.
-- Winetricks for DXVK
-- A 64-bit Linux DAW (REAPER, Ardour etc.)
-- GTK3 (for the vstbridgectl-gtk GUI only)
+- Wine Staging 10+ or 11 (tested on 11.20)
+- A 64-bit Linux DAW (REAPER, Ardour, Bitwig, Renoise…)
+- GNOME / KDE / X11 / Wayland (XWayland)
+- Many plugin GUIs need DXVK: `winetricks dxvk` in the prefix
 
-### Compatibility
+## Quick install
 
-Release binaries require glibc ≥ 2.34 and libstdc++ ≥ GCC 11 (built on Devuan 5 Daedalus / Debian 12 Bookworm).
-
-| Distro | Status |
-|--------|--------|
-| Debian 12 Bookworm / Devuan Daedalus | ✓ |
-| Debian 13 Trixie / Devuan Excalibur | ✓ |
-| Ubuntu 22.04 LTS and newer | ✓ |
-| Linux Mint 21+ | ✓ |
-| Pop!_OS 22.04+ | ✓ |
-| Fedora 35+ | ✓ |
-| RHEL 9 / AlmaLinux 9 / Rocky Linux 9 | ✓ |
-| openSUSE Leap 15.6 / Tumbleweed | ✓ |
-| Arch Linux / Manjaro / EndeavourOS | ✓ |
-| Void Linux (glibc variant) | ✓ |
-| Ubuntu 20.04 LTS | ✗ glibc 2.31 |
-| Debian 11 Bullseye | ✗ glibc 2.31 |
-| RHEL 8 / AlmaLinux 8 / Rocky Linux 8 | ✗ glibc 2.28 |
-
----
-
-## Installation
-
-Download the latest release tarball from the [releases page](https://github.com/rations/vstbridge/releases), then extract and run the installer:
+One command — downloads the latest release into `~/.local/share/vstbridge` (your previous install is kept as a backup):
 
 ```bash
-tar -xf vstbridge-<version>-x86_64.tar.gz
-cd vstbridge
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/destshotGuitar/vstbridge/master/install.sh | bash
 ```
 
-Each tarball comes with a `.sha256` file. You can check the download with `sha256sum -c vstbridge-<version>-x86_64.sha256`.
-
-The installer copies everything to `~/.local/share/vstbridge/` and adds `vstbridgectl-gtk` to your application menu. No root or sudo is required.
-
-After installing, open **vstbridgectl** from your application menu, or run it directly:
+Then point vstbridgectl at your Windows plugin folders and sync:
 
 ```bash
-~/.local/share/vstbridge/vstbridgectl-gtk
+export PATH="$HOME/.local/share/vstbridge:$PATH"
+vstbridgectl add "$HOME/.wine/drive_c/Program Files/Common Files/VST3"
+vstbridgectl sync
 ```
 
-### Directories tab
+and add the output folders to your DAW: VST3 `~/.vst3/vstbridge/`, VST2 `~/.vst/vstbridge/`, CLAP `~/.clap/vstbridge/`.
 
-Add the folders on your system that contain Windows VST2, VST3, or CLAP plugin files. Typical locations inside a Wine prefix are:
+### The disappearing-menus fix
 
-- `~/.wine/drive_c/Program Files/VstPlugins` — VST2 plugins
-- `~/.wine/drive_c/Program Files/Common Files/VST3` — VST3 plugins
-- `~/.wine/drive_c/Program Files/Common Files/CLAP` — CLAP plugins
+For JUCE plugins with menus (Toontrack, Hofa, …) enable the option either in `vstbridgectl-gtk` (Plugins tab → "Fix popup menus") or manually in `~/.vst3/vstbridge/vstbridge.toml`:
 
-Click **Add** to open a folder browser. Hidden directories such as `.wine` are visible in the browser. Add as many directories as needed, then move to the Sync tab.
-
-### Sync tab
-
-Click **Sync** to create the bridge `.so` files for every plugin found in your directories. The output log shows what was added, skipped, or failed. The available options are:
-
-- **Force** — recreate all bridges even if they are already up to date
-- **Prune** — remove bridges for plugins that no longer exist
-- **Verbose** — show detailed output for every plugin processed
-- **No verify** — skip the Wine/vstbridge compatibility check (useful if the check gives a false warning)
-
-Run a sync whenever you install or remove Windows plugins. If the output says "found N leftover files", tick **Prune** and sync again to remove old bridge files that no longer correspond to any plugin.
-
-### Status tab
-
-Shows the currently installed vstbridge version, the detected Wine version, and whether the bridge files are found at the configured path. Use this to confirm everything is set up correctly.
-
-### Settings tab
-
-The vstbridge path is pre-configured to `~/.local/share/vstbridge` by the installer and does not need to be changed. You would only use this tab if you have moved the bridge files to a different location.
-
-VST2 plugins are installed in centralized mode — vstbridgectl creates `~/.vst/vstbridge/` and mirrors your plugin directory structure inside it, placing the bridge `.so` alongside a copy of the Windows `.dll`. For example, a plugin at `~/.wine/drive_c/Program Files/VstPlugins/Toontrack/Superior Drummer.dll` becomes `~/.vst/vstbridge/Toontrack/Superior Drummer.so`.
-
-### Plugins tab
-
-Lists every plugin found in your plugin directories. Double-click a plugin, or select it and click **Configure...**, to change its settings:
-
-- the plugin group
-- the editor and compatibility options
-- the editor frame rate
-- extra Wine environment variables, one `KEY=VALUE` per line, for example `WINEDLLOVERRIDES=d3d11,dxgi=n,b`
-
-These are the same options described under [Configuration](#configuration).
-
-The settings are saved as a section for that plugin in the `vstbridge.toml` that vstbridge reads for it, usually `~/.vst3/vstbridge/vstbridge.toml` (or `~/.vst/…`, `~/.clap/…`). The rest of the file, including comments, is left untouched. The section is placed above any broader patterns so it takes precedence. **Reset to Defaults** removes the section again. Plugins with their own section are marked "custom settings" in the list. Changes apply the next time the plugin is loaded.
-
-### Configuring your DAW
-
-After syncing, point your DAW at the vstbridge output directories so it can find the bridge plugins:
-
-| Plugin format | DAW scan path |
-|---------------|--------------|
-| VST2 | `~/.vst/vstbridge/` |
-| VST3 | `~/.vst3/vstbridge/` |
-| CLAP | `~/.clap/vstbridge/` |
-
-Add whichever paths apply to your plugin formats, then do a full plugin rescan in your DAW.
-
-If you are migrating from yabridge, update your DAW's scan paths from `~/.vst/yabridge/`, `~/.vst3/yabridge/`, and `~/.clap/yabridge/` to the vstbridge equivalents above.
-
----
-
-## Uninstalling
-
-From the extracted release directory, run:
-
-```bash
-chmod +x uninstall.sh
-./uninstall.sh
+```toml
+["EZdrummer 3.vst3"]
+editor_popup_fix = true
 ```
-
-This removes all files from `~/.local/share/vstbridge/` and the desktop entry. Your plugin configuration (`~/.config/vstbridgectl/config.toml`) and any per-plugin `vstbridge.toml` files are left untouched.
-
----
 
 ## Building from source
 
-vstbridge uses Meson + Ninja and cross-compiles the Wine-side host binary with `winegcc-stable`/`wineg++-stable`.
-
-### Prerequisites — Debian/Ubuntu/Devuan (WineHQ packages)
-
-You need the WineHQ apt repository configured with both `winehq-staging` (for the Wine runtime) and the following packages:
-
 ```bash
-sudo apt install meson ninja-build pkg-config g++ libxcb1-dev uuid-dev wine-stable-dev wine-staging-dev
-```
-
-- `wine-stable-dev` provides the Wine development headers used during compilation.
-- `wine-staging-dev` provides the version-matched Wine import libraries that the linker needs.
-
-`winegcc-stable`/`wineg++-stable` do not exist as standalone binaries in the WineHQ packages. Create them as symlinks to the staging compiler, then create the include directory and link the headers into it:
-
-```bash
-sudo ln -s /usr/bin/winegcc /usr/local/bin/winegcc-stable
-sudo ln -s /usr/bin/wineg++ /usr/local/bin/wineg++-stable
-sudo mkdir -p /opt/wine-staging/include
-sudo ln -s /opt/wine-stable/include/wine /opt/wine-staging/include/wine
-```
-
-On Arch Linux, install `wine-staging` from the AUR; the compiler is named differently there. On Fedora, use `dnf`.
-
-**32-bit host prerequisites — Debian/Ubuntu/Devuan**
-
-The release's 32-bit host is a PE program (`-Dpe-bitbridge=true`), so it also runs on a WoW64 Wine such as Arch's `wine-staging`, which can't run a 32-bit Winelib host. It needs [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) with its `bin/` directory on your `PATH`, plus the i386 toolchain for its i386 unixlib:
-
-```bash
-sudo apt install g++-multilib libxcb1-dev:i386
-```
-
-The older 32-bit Winelib host (`-Dbitbridge=true`) only runs on a Wine with a 32-bit Unix side, and needs `g++-multilib libxcb1-dev:i386 uuid-dev:i386`.
-
-### Building
-```bash
-git clone https://github.com/rations/vstbridge
+git clone https://github.com/destshotGuitar/vstbridge.git
 cd vstbridge
-
-# Configure
-meson setup build --buildtype=release --cross-file=cross-wine.conf
-
-# Build
-ninja -C build
+meson setup vstbridge/build --buildtype=release --cross-file=vstbridge/cross-wine.conf
+ninja -C vstbridge/build
+make -C vstbridge/tools/vstbridgectl
 ```
 
-### Build options
+See the "Prerequisites" section of the original vstbridge README (kept in the git history) for the exact distro package list.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `bitbridge` | false | Build a 32-bit Winelib host for 32-bit Windows plugins |
-| `pe-bitbridge` | false | Use a 32-bit PE host built separately (see below) instead. Can't be combined with `bitbridge` |
-| `clap` | true | Build CLAP plugin support |
-| `vst3` | true | Build VST3 plugin support |
-| `system-asio` | false | Use the system `<asio.hpp>` instead of the bundled subproject |
-| `winedbg` | false | Run the Wine host under winedbg |
+## Credits
 
-Example with all plugin formats and the 32-bit PE host, which is built in a second build directory with llvm-mingw:
-
-```bash
-meson setup build --buildtype=release --cross-file=cross-wine.conf \
-  -Dclap=true -Dvst3=true -Dpe-bitbridge=true
-ninja -C build
-
-meson setup build-32 --buildtype=release --cross-file=cross-mingw-i686.conf -Dwine-host=pe
-ninja -C build-32
-```
-
-Install `vstbridge-host-32.exe`, `vstbridge-host-32-unixlib.so` and `vstbridge-host-32-unixlib-i386.so` from `build-32` next to the files from `build`.
-
-### Build outputs
-
-| File | Description |
-|------|-------------|
-| `libvstbridge-vst2.so` | Native .so loaded by the DAW for VST2 plugins |
-| `libvstbridge-vst3.so` | Native .so loaded by the DAW for VST3 plugins |
-| `libvstbridge-clap.so` | Native .so loaded by the DAW for CLAP plugins |
-| `libvstbridge-chainloader-vst2.so` | Tiny stub copied per-plugin (VST2) |
-| `libvstbridge-chainloader-vst3.so` | Tiny stub copied per-plugin (VST3) |
-| `libvstbridge-chainloader-clap.so` | Tiny stub copied per-plugin (CLAP) |
-| `vstbridge-host.exe` | Wine 64-bit plugin host process |
-| `vstbridge-host-32.exe` | Wine 32-bit plugin host process (`bitbridge` or `pe-bitbridge`) |
-| `vstbridge-host-32-unixlib.so` | The 32-bit PE host's Linux side on a WoW64 Wine (`pe-bitbridge`) |
-| `vstbridge-host-32-unixlib-i386.so` | The 32-bit PE host's Linux side on a Wine with a 32-bit Unix side (`pe-bitbridge`) |
-
-### Building vstbridgectl
-
-```bash
-cd tools/vstbridgectl
-
-# Fetch dependencies and build both CLI and GUI
-make
-```
-
-### Making a release tarball
-
-`make-release.sh` builds vstbridge (with the 32-bit PE host, so llvm-mingw has to be on your `PATH`) and vstbridgectl from scratch in a temporary directory, then packages them with the installer:
-
-```bash
-./make-release.sh                    # writes dist/vstbridge-<version>-x86_64.tar.gz and .sha256
-./make-release.sh --max-glibc 2.34   # also fail if the binaries need a newer glibc
-```
-
-The version comes from `git describe`. On a tagged commit (`v0.0.3`) you get `vstbridge-0.0.3-x86_64.tar.gz`. On any other commit you get a test build named after that commit, such as `vstbridge-0.0.2-16-gc41c2b1-x86_64.tar.gz`. The tracked files must be committed first.
-
-Before writing the archive, the script checks that:
-
-- it contains exactly the expected files
-- the binaries contain no paths from the build machine
-- the binaries only link expected libraries
-
-It also prints the minimum glibc the binaries need. It then unpacks the archive, installs it into a scratch home directory, checks that vstbridgectl finds the installed files, and uninstalls it again. Published releases are built on Devuan Daedalus so they run on older distributions.
-
----
-
-## Configuration
-
-Plugin-level configuration is done via a `vstbridge.toml` file placed alongside plugin files or in a parent directory. See the upstream [yabridge configuration documentation](https://github.com/robbert-vdh/yabridge#configuration) for the available options — the TOML structure is unchanged.
-
-vstbridge adds a few options on top of yabridge's:
-
-| Option | Values | Description |
-|--------|--------|-------------|
-| `editor_xembed` | `{true,false}` | Embed the editor with XEmbed. Defaults to `true`. Set it to `false` to use yabridge's reparenting method instead. |
-| `editor_coordinate_hack` | `{true,false}` | Move the Wine window back to `(0, 0)` after every resize. This helps plugins that draw their GUI offset by the window's screen position. Defaults to `false`. |
-| `editor_popup_fix` | `{true,false}` | Fix JUCE popup menus that close as soon as they open with Wine 10.x and later (Superior Drummer 3, EZdrummer 3, Hofa). Defaults to `false`. |
-| `environment` | `["KEY=VALUE", ...]` | Extra environment variables for this plugin's Wine host process. They override vstbridge's own settings, including `WINEPREFIX`. Defaults to none. |
-
-`environment` lets plugins with different Wine requirements share one prefix. For example, you can give one plugin its own DLL overrides:
-
-```toml
-# ~/.vst3/vstbridge/vstbridge.toml
-["SSL Native*.vst3"]
-environment = ["WINEDLLOVERRIDES=d3d11,dxgi=n,b"]
-
-["Roland Cloud/*"]
-editor_xembed = false
-```
-
-A few things to keep in mind:
-
-- The settings apply per plugin, not per instance. VST3 and CLAP host every instance of a plugin in a single process.
-- In a plugin group, all plugins share one process. The `environment` of the plugin that started the group is the one that's used.
-- vstbridge uses the first section whose pattern matches the plugin, and sections don't merge. Put specific patterns above broad ones like `["*"]`.
-- `WINELOADER` can't be set through `environment`, because vstbridge reads it before the host process starts. Set it in your DAW's environment instead.
-
-### Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `VSTBRIDGE_DEBUG_FILE` | Redirect log output to a file |
-| `VSTBRIDGE_DEBUG_LEVEL` | Log verbosity: 0 (default) to 3 |
-| `VSTBRIDGE_NO_WATCHDOG` | Disable the watchdog timer |
-| `VSTBRIDGE_TEMP_DIR` | Override the temp directory used for sockets |
-
----
-
-## License
-
-GPL-3.0 — same as upstream yabridge. Copyright in individual source files is retained by the original author, Robbert van der Helm.
-
-VST3 support is built with the Steinberg VST3 SDK 3.7.7, used under the terms of the GPL-3.0. VST2 support uses the VeSTige headers from LMMS and contains no code from Steinberg's VST2 SDK.
-
-VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. vstbridge is not affiliated with or endorsed by Steinberg.
+yabridge by Robbert van der Helm, vstbridge fork by rations, popup-menu analysis and patch by singularity098, modal-loop fixes by zx2c4, host-death hardening by Yagafgaf. Licensed under GPL-3.0, same as yabridge.
