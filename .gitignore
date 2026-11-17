@@ -15,3 +15,11 @@ tmp*/
 vst3bridge/
 
 /CLAUDE.md
+
+# Meson wrap lock and fetched subproject sources
+vstbridge/subprojects/.wraplock
+vstbridge/subprojects/*/
+
+# vstbridgectl fetched header-only dependencies
+vstbridge/tools/vstbridgectl/deps/
+vstbridge/tools/vstbridgectl/build/
