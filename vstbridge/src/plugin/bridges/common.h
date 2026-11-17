@@ -522,13 +522,6 @@ class PluginBridge {
         sockets_.connect();
 #endif
     }
-            throw std::runtime_error(
-                "The Wine plugin host exited before it connected");
-        }
-#else
-        sockets_.connect();
-#endif
-    }
 
     /**
      * Wake up `sockets_.connect()` once the Wine plugin host has exited

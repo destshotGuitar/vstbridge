@@ -16,6 +16,8 @@
 
 #include "plug-view-proxy.h"
 
+#include "plugin-proxy.h"
+
 #include <asio/post.hpp>
 
 namespace {

@@ -622,11 +622,28 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
                                     editor_rectangle_);
 
     switch (opcode) {
-        case effVendorSpecific:
+        case effVendorSpecific: {
             if (index == effGetEffectName && value == 0x50) {
                 return 0;
             }
-            break;
+            // HACK: REAPER asks for the gain reduction ('PreS', 'GRdB') from
+            //       its audio thread on every processing cycle, even for
+            //       plugins that don't support it. Passing that through means
+            //       the audio thread waits for the Wine GUI thread, which
+            //       causes dropouts whenever the plugin's GUI is busy. This is
+            //       only answered locally if the host already asked the plugin
+            //       and it said it doesn't support the API.
+            constexpr intptr_t presonus_id = 0x50726553;        // 'PreS'
+            constexpr intptr_t gain_reduction_id = 0x47526442;  // 'GRdB'
+            if (index == presonus_id && value == gain_reduction_id &&
+                gain_reduction_support_ == GainReductionSupport::no) {
+                logger_.log_event(true, opcode, index, value, nullptr, option,
+                                  std::nullopt);
+                logger_.log_event_response(true, opcode, 0, nullptr,
+                                           std::nullopt);
+                return 0;
+            }
+        } break;
         case effClose: {
             // Allow the plugin to handle its own shutdown, and then terminate
             // the process. Because terminating the Wine process will also
@@ -717,25 +734,6 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
                                               ? GainReductionSupport::yes
                                               : GainReductionSupport::no;
                 return result;
-            }
-        } break;
-        case effVendorSpecific: {
-            // HACK: REAPER asks for the gain reduction ('PreS', 'GRdB') from
-            //       its audio thread on every processing cycle, even for
-            //       plugins that don't support it. Passing that through means
-            //       the audio thread waits for the Wine GUI thread, which
-            //       causes dropouts whenever the plugin's GUI is busy. This is
-            //       only answered locally if the host already asked the plugin
-            //       and it said it doesn't support the API.
-            constexpr intptr_t presonus_id = 0x50726553;        // 'PreS'
-            constexpr intptr_t gain_reduction_id = 0x47526442;  // 'GRdB'
-            if (index == presonus_id && value == gain_reduction_id &&
-                gain_reduction_support_ == GainReductionSupport::no) {
-                logger_.log_event(true, opcode, index, value, nullptr, option,
-                                  std::nullopt);
-                logger_.log_event_response(true, opcode, 0, nullptr,
-                                           std::nullopt);
-                return 0;
             }
         } break;
     }
