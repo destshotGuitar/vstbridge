@@ -7,10 +7,17 @@
 # From a release tarball (install.sh sits next to the binaries):
 #   ./install.sh
 #
+# Missing dependencies are installed automatically through the system package
+# manager (dnf/apt-get/pacman/zypper) when possible: curl and tar for the
+# download, python3 for the directory watcher, wine (Staging 10+ or 11) to
+# run the plugins.
+#
 # Environment:
 #   VSTBRIDGE_VERSION   install a specific release instead of the latest
 #   VSTBRIDGE_SYSTEMD=0 skip the auto-sync systemd user services
 #   VSTBRIDGE_SETUP=0   skip the first-run plugin directory setup and sync
+#   VSTBRIDGE_DXVK=1    install winetricks and DXVK into the Wine prefix
+#                       (many plugin GUIs need DXVK; default: skip)
 set -euo pipefail
 
 REPO="destshotGuitar/vstbridge"
@@ -26,6 +33,126 @@ die()  { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -m)" = "x86_64" ] || die "This build is for x86_64 only. Your architecture: $(uname -m)"
 
+# --- Dependencies -------------------------------------------------------------
+
+PM=""
+detect_pm() {
+    if   command -v dnf     >/dev/null 2>&1; then PM="dnf"
+    elif command -v apt-get >/dev/null 2>&1; then PM="apt"
+    elif command -v pacman  >/dev/null 2>&1; then PM="pacman"
+    elif command -v zypper  >/dev/null 2>&1; then PM="zypper"
+    fi
+}
+
+pm_pkg() {
+    # Translate a command name into a package name for the detected PM.
+    case "$PM:$1" in
+        pacman:wine) printf 'wine-staging' ;;
+        *)           printf '%s' "$1" ;;
+    esac
+}
+
+install_pkgs() {
+    # Install packages with the detected package manager. Returns non-zero
+    # (after warning) when installation is impossible without the user.
+    local pkgs=("$@") sudo=""
+    case "$PM" in
+        apt|dnf|pacman|zypper) ;;
+        *)  warn "No supported package manager found (dnf/apt/pacman/zypper)."
+            warn "Install manually: ${pkgs[*]}"
+            return 1 ;;
+    esac
+    if [ "$(id -u)" -ne 0 ]; then
+        if ! command -v sudo >/dev/null 2>&1; then
+            warn "sudo not found; install manually: ${pkgs[*]}"
+            return 1
+        fi
+        sudo -v 2>/dev/null || {
+            warn "sudo needs a password; install manually: ${pkgs[*]}"
+            return 1
+        }
+        sudo="sudo"
+    fi
+    log "Installing missing dependencies: ${pkgs[*]}"
+    case "$PM" in
+        apt)    $sudo apt-get update -qq && $sudo apt-get install -y "${pkgs[@]}" ;;
+        dnf)    $sudo dnf install -y "${pkgs[@]}" ;;
+        pacman) $sudo pacman -Sy --needed --noconfirm "${pkgs[@]}" ;;
+        zypper) $sudo zypper --non-interactive install "${pkgs[@]}" ;;
+    esac
+}
+
+ensure_cmds() {
+    # Install the given commands if they are missing. Returns 0 once all of
+    # them are available, 1 otherwise.
+    local missing=() still=() cmd
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    [ "${#missing[@]}" -eq 0 ] && return 0
+    detect_pm
+    local pkgs=() m
+    for m in "${missing[@]}"; do
+        pkgs+=("$(pm_pkg "$m")")
+    done
+    install_pkgs "${pkgs[@]}" || return 1
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null 2>&1 || still+=("$cmd")
+    done
+    if [ "${#still[@]}" -gt 0 ]; then
+        warn "Still missing after install attempt: ${still[*]}"
+        return 1
+    fi
+}
+
+# python3 drives the vstbridge-watch directory watcher. Without it the sync
+# timer still works, so a failed install is a warning, not a fatal error.
+HAVE_WATCHER=1
+if ! command -v python3 >/dev/null 2>&1; then
+    if ensure_cmds python3; then
+        log "Installed python3"
+    else
+        warn "python3 is unavailable; the plugin directory watcher will be skipped."
+        HAVE_WATCHER=0
+    fi
+fi
+
+# Wine is the actual plugin runtime; a missing Wine must not stop the file
+# installation, but plugins won't load without it.
+if ! command -v wine >/dev/null 2>&1; then
+    if ensure_cmds wine; then
+        log "Installed $(wine --version 2>/dev/null || echo wine)"
+    else
+        warn "Wine was not found and could not be installed automatically."
+        warn "vstbridge needs Wine Staging 10+ or 11: https://wiki.winehq.org/Download"
+    fi
+fi
+if command -v wine >/dev/null 2>&1; then
+    WINE_MAJOR="$(wine --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)"
+    if [ -n "$WINE_MAJOR" ] && [ "$WINE_MAJOR" -lt 10 ]; then
+        warn "$(wine --version) detected, but vstbridge is tested with Wine Staging 10+ or 11."
+        warn "Upgrade Wine if plugins misbehave."
+    fi
+fi
+
+# --- Optional DXVK (many plugin GUIs need it) ---------------------------------
+
+if [ "${VSTBRIDGE_DXVK:-0}" = "1" ]; then
+    if command -v winetricks >/dev/null 2>&1 || ensure_cmds winetricks; then
+        DXVK_PREFIX="${WINEPREFIX:-$HOME/.wine}"
+        log "Installing DXVK into $DXVK_PREFIX"
+        if WINEPREFIX="$DXVK_PREFIX" winetricks -q dxvk; then
+            log "DXVK installed"
+        else
+            warn "winetricks dxvk failed in $DXVK_PREFIX."
+            warn "Try manually: WINEPREFIX='$DXVK_PREFIX' winetricks dxvk"
+        fi
+    else
+        warn "winetricks is unavailable; skipping DXVK."
+        warn "Many plugin GUIs need it: https://github.com/doitsujin/dxvk"
+    fi
+fi
+
 # --- Locate the binaries -----------------------------------------------------
 
 SRC_DIR=""
@@ -35,8 +162,7 @@ if [ -f "$SCRIPT_DIR/libvstbridge-vst3.so" ]; then
     # Running from inside an extracted release tarball.
     SRC_DIR="$SCRIPT_DIR"
 else
-    command -v curl >/dev/null 2>&1 || die "curl is required for the download"
-    command -v tar  >/dev/null 2>&1 || die "tar is required for the download"
+    ensure_cmds curl tar || die "curl and tar are required to download vstbridge. Install them manually and re-run this script."
 
     VERSION="${VSTBRIDGE_VERSION:-}"
     if [ -z "$VERSION" ]; then
@@ -130,7 +256,9 @@ Unit=vstbridge-sync.service
 WantedBy=timers.target
 EOF
 
-    cat > "$UNIT_DIR/vstbridge-watch.service" <<EOF
+    systemctl --user daemon-reload
+    if [ "$HAVE_WATCHER" = "1" ]; then
+        cat > "$UNIT_DIR/vstbridge-watch.service" <<EOF
 [Unit]
 Description=Watch plugin directories and auto-sync vstbridge
 
@@ -142,11 +270,15 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-
-    systemctl --user daemon-reload
-    systemctl --user enable --now vstbridge-watch.service 2>/dev/null \
-        && log "Enabled the plugin directory watcher (vstbridge-watch.service)" \
-        || warn "Could not start vstbridge-watch.service"
+        systemctl --user enable --now vstbridge-watch.service 2>/dev/null \
+            && log "Enabled the plugin directory watcher (vstbridge-watch.service)" \
+            || warn "Could not start vstbridge-watch.service"
+    else
+        rm -f "$UNIT_DIR/vstbridge-watch.service"
+        systemctl --user daemon-reload
+        warn "Skipping vstbridge-watch.service (python3 unavailable)."
+        warn "Run 'vstbridgectl sync' manually after installing new plugins."
+    fi
     systemctl --user enable --now vstbridge-sync.timer 2>/dev/null \
         && log "Enabled the login-time sync timer (vstbridge-sync.timer)" \
         || warn "Could not start vstbridge-sync.timer"

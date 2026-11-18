@@ -30,7 +30,7 @@
 - **Wine Staging 10+ или 11** (проверено на 11.20)
 - 64-битный Linux DAW (REAPER, Ardour, Bitwig, Renoise…)
 - GNOME / KDE / X11 / Wayland (XWayland)
-- Для GUI многих плагинов нужен DXVK: `winetricks dxvk` в нужном префиксе
+- Для GUI многих плагинов нужен DXVK: либо `VSTBRIDGE_DXVK=1` перед установкой (скрипт сам поставит winetricks и выполнит `winetricks dxvk` в префиксе `~/.wine` или `$WINEPREFIX`), либо вручную: `winetricks dxvk` в нужном префиксе
 
 ## Быстрая установка
 
@@ -42,6 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/destshotGuitar/vstbridge/master/ins
 
 Дальше ничего руками делать не нужно — скрипт сам:
 
+- проверит зависимости (curl, tar, python3, wine) и установит недостающие через пакетный менеджер системы (dnf/apt/pacman/zypper), спросив sudo;
 - положит `vstbridgectl` и `vstbridgectl-gtk` в `~/.local/bin` (без `export PATH`; строчка в `~/.bashrc` добавляется только если `~/.local/bin` не в PATH);
 - при первом запуске зарегистрирует стандартные папки плагинов префикса `~/.wine` (VST3, VST2, CLAP — только существующие) и выполнит `vstbridgectl sync`;
 - поставит и включит systemd-сервисы авто-синхронизации (см. ниже).
@@ -148,7 +149,7 @@ Full list in the `master` commit history (32 commits on top of vstbridge 0.0.5).
 - Wine Staging 10+ or 11 (tested on 11.20)
 - A 64-bit Linux DAW (REAPER, Ardour, Bitwig, Renoise…)
 - GNOME / KDE / X11 / Wayland (XWayland)
-- Many plugin GUIs need DXVK: `winetricks dxvk` in the prefix
+- Many plugin GUIs need DXVK: either set `VSTBRIDGE_DXVK=1` for the install (the script installs winetricks and runs `winetricks dxvk` in the `~/.wine` prefix or `$WINEPREFIX`), or run `winetricks dxvk` in the prefix yourself
 
 ## Quick install
 
@@ -160,6 +161,7 @@ curl -fsSL https://raw.githubusercontent.com/destshotGuitar/vstbridge/master/ins
 
 That's it — the script does the rest by itself:
 
+- checks the dependencies (curl, tar, python3, wine) and installs whatever is missing through your system package manager (dnf/apt/pacman/zypper), asking for sudo when needed;
 - puts `vstbridgectl` and `vstbridgectl-gtk` into `~/.local/bin` (no `export PATH` needed; a line in `~/.bashrc` is only added if `~/.local/bin` is not on your PATH);
 - on first run, registers the standard plugin folders of the `~/.wine` prefix (VST3, VST2, CLAP — only the ones that exist) and runs `vstbridgectl sync`;
 - installs and enables the systemd auto-sync services (see below).
