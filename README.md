@@ -40,19 +40,23 @@
 curl -fsSL https://raw.githubusercontent.com/destshotGuitar/vstbridge/master/install.sh | bash
 ```
 
-Затем добавьте папки с Windows-плагинами и синхронизируйте:
+Дальше ничего руками делать не нужно — скрипт сам:
 
-```bash
-export PATH="$HOME/.local/share/vstbridge:$PATH"
-vstbridgectl add "$HOME/.wine/drive_c/Program Files/Common Files/VST3"
-vstbridgectl sync
-```
+- положит `vstbridgectl` и `vstbridgectl-gtk` в `~/.local/bin` (без `export PATH`; строчка в `~/.bashrc` добавляется только если `~/.local/bin` не в PATH);
+- при первом запуске зарегистрирует стандартные папки плагинов префикса `~/.wine` (VST3, VST2, CLAP — только существующие) и выполнит `vstbridgectl sync`;
+- поставит и включит systemd-сервисы авто-синхронизации (см. ниже).
 
-и укажите DAW на выходные папки:
+Осталось только указать DAW на выходные папки:
 
 - VST3: `~/.vst3/vstbridge/`
 - VST2: `~/.vst/vstbridge/`
 - CLAP: `~/.clap/vstbridge/`
+
+Если плагины лежат в другом префиксе или в нестандартных папках, добавьте их вручную — авто-синхронизация подхватит изменения конфига сама, `sync` вызывать не обязательно:
+
+```bash
+vstbridgectl add "/путь/к/папке/с/плагинами"
+```
 
 ### Фикс «пропадающих» меню
 
@@ -154,15 +158,19 @@ One command — downloads the latest release into `~/.local/share/vstbridge` (yo
 curl -fsSL https://raw.githubusercontent.com/destshotGuitar/vstbridge/master/install.sh | bash
 ```
 
-Then point vstbridgectl at your Windows plugin folders and sync:
+That's it — the script does the rest by itself:
+
+- puts `vstbridgectl` and `vstbridgectl-gtk` into `~/.local/bin` (no `export PATH` needed; a line in `~/.bashrc` is only added if `~/.local/bin` is not on your PATH);
+- on first run, registers the standard plugin folders of the `~/.wine` prefix (VST3, VST2, CLAP — only the ones that exist) and runs `vstbridgectl sync`;
+- installs and enables the systemd auto-sync services (see below).
+
+All that remains is pointing your DAW at the output folders: VST3 `~/.vst3/vstbridge/`, VST2 `~/.vst/vstbridge/`, CLAP `~/.clap/vstbridge/`.
+
+If your plugins live in another prefix or in non-standard folders, add those manually — the auto-sync picks up config changes on its own, no `sync` needed:
 
 ```bash
-export PATH="$HOME/.local/share/vstbridge:$PATH"
-vstbridgectl add "$HOME/.wine/drive_c/Program Files/Common Files/VST3"
-vstbridgectl sync
+vstbridgectl add "/path/to/your/plugin/folder"
 ```
-
-and add the output folders to your DAW: VST3 `~/.vst3/vstbridge/`, VST2 `~/.vst/vstbridge/`, CLAP `~/.clap/vstbridge/`.
 
 ### The disappearing-menus fix
 
